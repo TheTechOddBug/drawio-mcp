@@ -95,14 +95,7 @@ function generateDrawioUrl(data, type, options = {})
   params.set("border", border.toString());
   params.set("edit", edit);
 
-  let createHash = "#create=" + encodeURIComponent(JSON.stringify(createObj));
-
-  // Workaround for unsupported xml type
-  if (createObj.type === "xml")
-  {
-    createHash = "#R" + compressedData;
-  }
-
+  const createHash = "#create=" + encodeURIComponent(JSON.stringify(createObj));
   const paramsStr = params.toString();
 
   return DRAWIO_BASE_URL + (paramsStr ? "?" + paramsStr : "") + createHash;
