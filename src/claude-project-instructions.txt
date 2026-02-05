@@ -43,7 +43,7 @@ raw_deflate = c.compress(encoded.encode('utf-8')) + c.flush()
 data = base64.b64encode(raw_deflate).decode()
 
 payload = json.dumps({"type": diagram_type, "compressed": True, "data": data})
-url = f"https://app.diagrams.net/#create={quote(payload, safe='')}"
+url = f"https://app.diagrams.net/?pv=0&grid=0#create={quote(payload, safe='')}"
 print(url)
 ```
 
