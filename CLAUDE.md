@@ -209,11 +209,8 @@ An alternative approach is available that works **without installing the MCP ser
 
 Add the contents of [`src/claude-project-instructions.txt`](https://github.com/jgraph/drawio-mcp/blob/main/src/claude-project-instructions.txt) to your Claude Project instructions.
 
-### Token Usage and URL Accuracy
+### How URL Delivery Works
 
-The instructions tell Claude to output the URL as a clickable link. Note:
+The generated URL contains compressed base64 data. LLMs are known to silently corrupt base64 strings when reproducing them token by token - even a single changed character breaks the link completely.
 
-1. **Token count**: Long URLs consume output tokens
-2. **Character accuracy**: The URL contains base64-encoded data where even a single character change breaks the diagram
-
-If you experience broken links, you can modify the instructions to have Claude direct users to the URL in the script output instead of re-typing it. See the README for the alternative instruction text.
+To avoid this, the Python script outputs a complete HTML page with the URL embedded as a clickable button. Claude is instructed to present this HTML output as an artifact, so the URL never passes through Claude's text generation. This ensures the link is always correct.

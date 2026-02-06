@@ -289,31 +289,14 @@ An alternative approach is available that works **without installing the MCP ser
 The instructions teach Claude to:
 1. Generate diagram code (Mermaid, XML, or CSV)
 2. Execute Python code to compress and encode the diagram
-3. Output a clickable URL that opens draw.io with your diagram
+3. The script outputs a complete HTML page with the URL embedded as a clickable button
+4. Claude presents the HTML as an artifact - the user clicks the button to open draw.io
 
-### Token Usage Note
+### Why HTML Output?
 
-The current instructions tell Claude to output the URL as a clickable link for user convenience. This has two considerations:
+The generated URL contains compressed base64 data. LLMs are known to silently corrupt base64 strings when reproducing them token by token - even a single changed character breaks the link completely.
 
-1. **Token count**: The URL can be long (especially for complex diagrams), which consumes output tokens
-2. **Character accuracy**: The URL contains base64-encoded data where even a single character change breaks the diagram. The instructions emphasize character-perfect accuracy, but if you experience issues with broken links, you can use the alternative ending below.
-
-### Alternative: Reference Script Output Only
-
-If you prefer not to have Claude re-type the URL (to save tokens or avoid potential character substitution issues), replace the last section of the instructions with:
-
-```
-## CRITICAL: URL Output Rules
-
-**NEVER re-type, repeat, or copy the generated URL in your response.**
-
-After the Python script executes, simply tell the user:
-> "Click the URL in the code output above to open your diagram."
-
-Why: The URL contains base64-encoded data that can be corrupted when reproduced. The ONLY safe URL is the one printed directly by Python in the execution output.
-```
-
-This approach requires users to click the URL in the code execution output rather than in Claude's response, but guarantees the URL is always correct.
+By having the Python script output a complete HTML page with the link already embedded, the URL never passes through Claude's text generation. Claude simply presents the script output as an artifact, ensuring the link is always correct.
 
 ## Development
 
