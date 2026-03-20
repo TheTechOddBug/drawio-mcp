@@ -5,6 +5,7 @@ import {
 } from "@modelcontextprotocol/ext-apps/server";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
+import { normalizeDiagramXml, INVALID_DIAGRAM_XML_MESSAGE } from "./normalize-diagram-xml.js";
 
 /**
  * Build the self-contained HTML string that renders diagrams.
@@ -109,6 +110,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs)
     <!-- MCP Apps SDK (inlined, exports stripped, App alias added) -->
     <script>
 ${appWithDepsJs}
+${normalizeDiagramXml.toString()}
 
 // --- Client-side app logic ---
 
@@ -121,6 +123,7 @@ const fullscreenBtn  = document.getElementById("fullscreen-btn");
 const copyXmlBtn     = document.getElementById("copy-xml-btn");
 var drawioEditUrl = null;
 var currentXml = null;
+var invalidDiagramXmlMessage = ${JSON.stringify(INVALID_DIAGRAM_XML_MESSAGE)};
 
 var app = new App({ name: "draw.io Diagram Viewer", version: "1.0.0" });
 
@@ -226,11 +229,20 @@ app.ontoolresult = function(result)
 
   if (textBlock && textBlock.type === "text")
   {
-    renderDiagram(textBlock.text);
+    var normalizedXml = normalizeDiagramXml(textBlock.text);
+
+    if (normalizedXml)
+    {
+      renderDiagram(normalizedXml);
+    }
+    else
+    {
+      showError(invalidDiagramXmlMessage);
+    }
   }
   else
   {
-    showError("No diagram XML received.");
+    showError(invalidDiagramXmlMessage);
   }
 };
 
@@ -304,11 +316,16 @@ export function processAppBundle(raw)
  * Create a new MCP server instance with the create_diagram tool + UI resource.
  *
  * @param {string} html - The pre-built, self-contained HTML string.
- * @param {object} [serverOptions] - Optional McpServer constructor options (e.g. jsonSchemaValidator).
+ * @param {object} [options] - Options.
+ * @param {string} [options.domain] - Widget domain for ChatGPT sandbox rendering (e.g. "https://mcp.draw.io").
+ * @param {object} [options.serverOptions] - Optional McpServer constructor options (e.g. jsonSchemaValidator).
  * @returns {McpServer}
  */
-export function createServer(html, serverOptions = {})
+export function createServer(html, options = {})
 {
+  const { domain, serverOptions = {} } = typeof options === "object" && options !== null
+    ? options
+    : { serverOptions: options };
   const server = new McpServer(
     { name: "drawio-mcp-app", version: "1.0.0" },
     serverOptions,
@@ -356,11 +373,21 @@ export function createServer(html, serverOptions = {})
         idempotentHint: true,
         openWorldHint: false,
       },
-      _meta: { ui: { resourceUri } },
+      _meta:
+      {
+        ui: { resourceUri },
+        "openai/toolInvocation/invoking": "Creating diagram...",
+        "openai/toolInvocation/invoked": "Diagram ready.",
+      },
     },
     async function({ xml })
     {
-      return { content: [{ type: "text", text: xml }] };
+      var normalizedXml = normalizeDiagramXml(xml) || xml;
+
+      return {
+        structuredContent: { type: "diagram", format: "drawio-xml" },
+        content: [{ type: "text", text: normalizedXml }],
+      };
     }
   );
 
@@ -382,6 +409,7 @@ export function createServer(html, serverOptions = {})
             {
               ui:
               {
+                ...(domain ? { domain } : {}),
                 csp:
                 {
                   resourceDomains: ["https://viewer.diagrams.net"],

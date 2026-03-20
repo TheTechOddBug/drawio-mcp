@@ -37,7 +37,8 @@ async function startStreamableHTTPServer()
 
   app.all("/mcp", async function(req, res)
   {
-    const server = createServer(html);
+    const server = createServer(html, { domain: process.env.DOMAIN });
+
     const transport = new StreamableHTTPServerTransport(
     {
       sessionIdGenerator: undefined,
@@ -87,7 +88,7 @@ async function startStreamableHTTPServer()
 
 async function startStdioServer()
 {
-  await createServer(html).connect(new StdioServerTransport());
+  await createServer(html, { domain: process.env.DOMAIN }).connect(new StdioServerTransport());
 }
 
 async function main()
