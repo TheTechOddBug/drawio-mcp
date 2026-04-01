@@ -439,53 +439,60 @@ async function renderDiagram(xml)
     return;
   }
 
-  containerEl.innerHTML = "";
-
-  var config = {
-    highlight: "#0000ff",
-    "dark-mode": "auto",
-    nav: true,
-    resize: true,
-    toolbar: "zoom layers tags",
-    xml: xml
-  };
-
-  var graphDiv = document.createElement("div");
-  graphDiv.className = "mxgraph";
-  graphDiv.setAttribute("data-mxgraph", JSON.stringify(config));
-  containerEl.appendChild(graphDiv);
-
-  loadingEl.style.display = "none";
-  containerEl.style.display = "block";
-  toolbarEl.style.display = "flex";
-  drawioEditUrl = generateDrawioEditUrl(xml);
-  currentXml = xml;
-
-  var bg = getComputedStyle(document.body).backgroundColor;
-  GraphViewer.darkBackgroundColor = bg;
-
-  // Use createViewerForElement with callback to capture the viewer instance
-  var graphDiv2 = containerEl.querySelector('.mxgraph');
-
-  if (graphDiv2 != null)
+  try
   {
-    GraphViewer.createViewerForElement(graphDiv2, function(viewer)
+    containerEl.innerHTML = "";
+
+    var config = {
+      highlight: "#0000ff",
+      "dark-mode": "auto",
+      nav: true,
+      resize: true,
+      toolbar: "zoom layers tags",
+      xml: xml
+    };
+
+    var graphDiv = document.createElement("div");
+    graphDiv.className = "mxgraph";
+    graphDiv.setAttribute("data-mxgraph", JSON.stringify(config));
+    containerEl.appendChild(graphDiv);
+
+    loadingEl.style.display = "none";
+    containerEl.style.display = "block";
+    toolbarEl.style.display = "flex";
+    drawioEditUrl = generateDrawioEditUrl(xml);
+    currentXml = xml;
+
+    var bg = getComputedStyle(document.body).backgroundColor;
+    GraphViewer.darkBackgroundColor = bg;
+
+    // Use createViewerForElement with callback to capture the viewer instance
+    var graphDiv2 = containerEl.querySelector('.mxgraph');
+
+    if (graphDiv2 != null)
     {
-      graphViewer = viewer;
-
-      // Intro animation: bounce vertices, wipe edges
-      if (viewer != null && viewer.graph != null)
+      GraphViewer.createViewerForElement(graphDiv2, function(viewer)
       {
-        playViewerIntroAnimation(viewer.graph);
-      }
+        graphViewer = viewer;
 
+        // Intro animation: bounce vertices, wipe edges
+        if (viewer != null && viewer.graph != null)
+        {
+          playViewerIntroAnimation(viewer.graph);
+        }
+
+        notifySize();
+      });
+    }
+    else
+    {
+      GraphViewer.processElements();
       notifySize();
-    });
+    }
   }
-  else
+  catch (e)
   {
-    GraphViewer.processElements();
-    notifySize();
+    showError("Failed to render diagram: " + e.message);
   }
 }
 
@@ -1238,21 +1245,24 @@ app.ontoolinput = function(params)
       setTimeout(function()
       {
         endStreaming();
-        renderDiagram(xml);
+        renderDiagram(xml).catch(function(e)
+        {
+          showError("Failed to render diagram: " + e.message);
+        });
       }, 300);
     }
     else
     {
       endStreaming();
-      renderDiagram(xml);
+      renderDiagram(xml).catch(function(e)
+      {
+        showError("Failed to render diagram: " + e.message);
+      });
     }
   }
   catch (e)
   {
-    if (typeof console !== 'undefined')
-    {
-      console.error('Final input render error:', e.message);
-    }
+    showError("Failed to render diagram: " + e.message);
   }
 };
 
@@ -1268,7 +1278,10 @@ app.ontoolresult = function(result)
 
     if (normalizedXml)
     {
-      renderDiagram(normalizedXml);
+      renderDiagram(normalizedXml).catch(function(e)
+      {
+        showError("Failed to render diagram: " + e.message);
+      });
     }
     else
     {
