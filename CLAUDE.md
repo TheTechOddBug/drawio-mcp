@@ -27,7 +27,7 @@ Each subdirectory has its own `CLAUDE.md` with implementation details.
 - **Output**: Array of matching shapes with `{style, w, h, title}` — style strings can be used directly in mxCell attributes
 - **Search**: AND logic across space-separated terms, exact + Soundex phonetic matching
 - **Coverage**: ~10,000+ shapes across all draw.io libraries (AWS, Azure, GCP, P&ID, electrical, Cisco, Kubernetes, UML, BPMN, etc.)
-- **Use case**: Call before `create_diagram` to find correct style strings for domain-specific shapes
+- **Use case**: Call before `create_diagram` only for diagrams needing industry-specific icons (cloud, network, P&ID, electrical, Cisco, Kubernetes). Skip for standard diagrams (flowcharts, UML, ERD, org charts) that use basic geometric shapes
 
 ## MCP Tool Server Tools
 

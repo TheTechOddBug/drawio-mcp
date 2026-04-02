@@ -1868,10 +1868,12 @@ export function createServer(html, options = {})
         title: "Search Shapes",
         description:
           "Search the draw.io shape library by keywords. Returns matching shapes with " +
-          "their exact style strings, dimensions, and titles. Use this to find the correct " +
-          "style for domain-specific shapes (e.g. AWS, Azure, GCP, P&ID, electrical, " +
-          "network, Cisco, Kubernetes, UML, BPMN, floorplan, mockup) before generating " +
-          "XML with the create_diagram tool. The style string from the results can be " +
+          "their exact style strings, dimensions, and titles. Use ONLY for diagrams that " +
+          "need industry-specific or branded icons (cloud architecture, network topology, " +
+          "P&ID, electrical, Cisco, Kubernetes, BPMN). Do NOT use for standard diagram " +
+          "types like flowcharts, UML, ERD, org charts, or mind maps — these use basic " +
+          "geometric shapes (rectangles, diamonds, circles, cylinders) that are already " +
+          "covered in the XML reference. The style string from the results can be " +
           "used directly in mxCell style attributes.",
         inputSchema:
         {
