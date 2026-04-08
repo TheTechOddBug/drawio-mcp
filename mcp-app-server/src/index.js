@@ -86,6 +86,14 @@ async function startStreamableHTTPServer()
     : undefined;
   const app = createMcpExpressApp({ host: "0.0.0.0", allowedHosts });
 
+  // Serve favicon
+  const faviconPath = path.join(__dirname, "..", "favicon.png");
+
+  app.get(["/favicon.ico", "/favicon.png"], function(req, res)
+  {
+    res.sendFile(faviconPath);
+  });
+
   app.all("/mcp", async function(req, res)
   {
     const method = req.body && req.body.method;
