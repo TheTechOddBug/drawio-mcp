@@ -26,6 +26,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, options)
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <base href="https://app.diagrams.net/" />
     <title>draw.io Diagram</title>
     <link rel="icon" href="/favicon.png" type="image/png" />
     <style>
@@ -2107,7 +2108,7 @@ export function createServer(html, options = {})
                 ...(domain ? { domain } : {}),
                 csp:
                 {
-                  resourceDomains: ["https://viewer.diagrams.net"],
+                  resourceDomains: ["https://viewer.diagrams.net", "https://app.diagrams.net"],
                   connectDomains: ["https://viewer.diagrams.net"],
                 },
               },
