@@ -6,6 +6,8 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { normalizeDiagramXml, INVALID_DIAGRAM_XML_MESSAGE } from "./normalize-diagram-xml.js";
+import postprocessModule from "../../postprocessor/postprocess.js";
+var postprocessDiagramXml = postprocessModule.postprocess;
 
 /**
  * Build the self-contained HTML string that renders diagrams.
@@ -1992,6 +1994,16 @@ export function createServer(html, options = {})
           content: [{ type: "text", text: "Could not extract draw.io XML from input. Expected <mxGraphModel> or <mxfile> root element. Received (first 200 chars): " + preview }],
           isError: true,
         };
+      }
+
+      // Post-process XML to optimize edge routing
+      try
+      {
+        normalizedXml = postprocessDiagramXml(normalizedXml).xml;
+      }
+      catch (e)
+      {
+        // Use original XML on failure
       }
 
       var content = [{ type: "text", text: normalizedXml }];

@@ -9,8 +9,11 @@ import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
 import { fileURLToPath } from "url";
 import { tmpdir } from "os";
+import { createRequire } from "module";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
+const require = createRequire(import.meta.url);
+const postprocessModule = require("./postprocessor/postprocess.js");
 const DRAWIO_BASE_URL = "https://app.diagrams.net/";
 
 // Read the shared XML reference once at startup (single source of truth).
@@ -302,6 +305,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) =>
     {
       case "open_drawio_xml":
         type = "xml";
+
+        // Post-process XML to optimize edge routing
+        try
+        {
+          content = postprocessModule.postprocess(content).xml;
+        }
+        catch (e)
+        {
+          // Use original XML on failure
+        }
+
         break;
       case "open_drawio_csv":
         type = "csv";
