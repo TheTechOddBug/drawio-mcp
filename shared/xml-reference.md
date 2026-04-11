@@ -12,14 +12,14 @@ Detailed reference for styles, edge routing, containers, layers, tags, metadata,
 
 **Rounded rectangle:**
 ```xml
-<mxCell id="2" value="Label" style="rounded=1;whiteSpace=wrap;" vertex="1" parent="1">
+<mxCell id="2" value="Label" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
   <mxGeometry x="100" y="100" width="120" height="60" as="geometry"/>
 </mxCell>
 ```
 
 **Diamond (decision):**
 ```xml
-<mxCell id="3" value="Condition?" style="rhombus;whiteSpace=wrap;" vertex="1" parent="1">
+<mxCell id="3" value="Condition?" style="rhombus;whiteSpace=wrap;html=1;" vertex="1" parent="1">
   <mxGeometry x="100" y="200" width="120" height="80" as="geometry"/>
 </mxCell>
 ```
@@ -58,7 +58,23 @@ Detailed reference for styles, edge routing, containers, layers, tags, metadata,
 | `group` | style keyword | Invisible container (pointerEvents=0) |
 | `container=1` | 0 or 1 | Enable container behavior on any shape |
 | `pointerEvents=0` | 0 or 1 | Prevent container from capturing child connections |
+| `html=1` | 0 or 1 | Enable HTML rendering in labels (required for `<b>`, `<br>`, `<font>`, etc.) |
 | `shape=umlLifeline;perimeter=lifelinePerimeter;size=16` | shape | UML sequence diagram lifeline (size = header height) |
+
+## HTML labels
+
+**Always include `html=1` in the style** when the `value` attribute contains any HTML tags (`<b>`, `<br>`, `<font>`, `<i>`, `<u>`, `<hr>`, `<p>`, `<table>`, etc.). Without `html=1`, HTML tags are displayed as literal text instead of being rendered.
+
+HTML in attribute values must be **XML-escaped**: `<` → `&lt;`, `>` → `&gt;`, `&` → `&amp;`, `"` → `&quot;`
+
+```xml
+<mxCell value="&lt;b&gt;Title&lt;/b&gt;&lt;br&gt;Description"
+        style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="1">
+  <mxGeometry x="100" y="100" width="120" height="60" as="geometry"/>
+</mxCell>
+```
+
+**Best practice:** Always include `html=1` in every cell style. This ensures labels render correctly whether they contain HTML or plain text — plain text is unaffected by the flag.
 
 ## Edge routing
 
@@ -143,13 +159,13 @@ Set `parent="containerId"` on child cells. Children use **relative coordinates**
 ### Example: Architecture container with swimlane
 
 ```xml
-<mxCell id="svc1" value="User Service" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;" vertex="1" parent="1">
+<mxCell id="svc1" value="User Service" style="swimlane;startSize=30;fillColor=#dae8fc;strokeColor=#6c8ebf;html=1;" vertex="1" parent="1">
   <mxGeometry x="100" y="100" width="300" height="200" as="geometry"/>
 </mxCell>
-<mxCell id="api1" value="REST API" style="rounded=1;whiteSpace=wrap;" vertex="1" parent="svc1">
+<mxCell id="api1" value="REST API" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="svc1">
   <mxGeometry x="20" y="40" width="120" height="60" as="geometry"/>
 </mxCell>
-<mxCell id="db1" value="Database" style="shape=cylinder3;whiteSpace=wrap;" vertex="1" parent="svc1">
+<mxCell id="db1" value="Database" style="shape=cylinder3;whiteSpace=wrap;html=1;" vertex="1" parent="svc1">
   <mxGeometry x="160" y="40" width="120" height="60" as="geometry"/>
 </mxCell>
 ```
@@ -160,7 +176,7 @@ Set `parent="containerId"` on child cells. Children use **relative coordinates**
 <mxCell id="grp1" value="" style="group;" vertex="1" parent="1">
   <mxGeometry x="100" y="100" width="300" height="200" as="geometry"/>
 </mxCell>
-<mxCell id="c1" value="Component A" style="rounded=1;whiteSpace=wrap;" vertex="1" parent="grp1">
+<mxCell id="c1" value="Component A" style="rounded=1;whiteSpace=wrap;html=1;" vertex="1" parent="grp1">
   <mxGeometry x="10" y="10" width="120" height="60" as="geometry"/>
 </mxCell>
 ```
@@ -177,7 +193,7 @@ Cell `id="0"` is the root and cell `id="1"` is the default layer — both always
     <mxCell id="0"/>
     <mxCell id="1" parent="0"/>
     <mxCell id="2" value="Annotations" parent="0"/>
-    <mxCell id="10" value="Server" style="rounded=1;" vertex="1" parent="1">
+    <mxCell id="10" value="Server" style="rounded=1;html=1;" vertex="1" parent="1">
       <mxGeometry x="100" y="100" width="120" height="60" as="geometry"/>
     </mxCell>
     <mxCell id="20" value="Note: deprecated" style="text;" vertex="1" parent="2">
