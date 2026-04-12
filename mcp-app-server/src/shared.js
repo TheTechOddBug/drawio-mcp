@@ -1373,15 +1373,30 @@ fullscreenBtn.addEventListener("click", function()
 });
 
 // Re-render when tab becomes visible if the viewer failed to initialize
-// in the background (rAF is suspended in inactive tabs)
+// or rendered with zero dimensions in the background (GraphViewer needs
+// nonzero offsetWidth; rAF-based size reporting returns 0 in hidden tabs)
 document.addEventListener('visibilitychange', function()
 {
-  if (!document.hidden && currentXml && graphViewer == null)
+  if (!document.hidden && currentXml)
   {
-    renderDiagram(currentXml).catch(function(e)
+    var svgEl = containerEl.querySelector('svg');
+    var needsRerender = graphViewer == null ||
+      svgEl == null ||
+      svgEl.getBoundingClientRect().height < 1;
+
+    if (needsRerender)
     {
-      showError("Failed to render diagram: " + e.message);
-    });
+      graphViewer = null;
+      renderDiagram(currentXml).catch(function(e)
+      {
+        showError("Failed to render diagram: " + e.message);
+      });
+    }
+    else
+    {
+      // Viewer rendered OK but host may have wrong size — update it
+      notifySize('visibilitychange');
+    }
   }
 });
 
