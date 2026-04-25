@@ -26,20 +26,23 @@ function getBuildVersion()
 
 /**
  * Build the self-contained HTML string that renders diagrams.
- * All dependencies (ext-apps App class, pako deflate, drawio-mermaid)
- * are inlined so the HTML works in a sandboxed iframe with no extra
- * fetches.
+ * All dependencies (ext-apps App class, pako deflate, drawio-mermaid,
+ * drawio-elk) are inlined so the HTML works in a sandboxed iframe with
+ * no extra fetches.
  *
  * @param {string} appWithDepsJs - The processed MCP Apps SDK bundle (exports stripped, App alias added).
  * @param {string} pakoDeflateJs - The pako deflate browser bundle.
- * @param {string} mermaidJs - The drawio-mermaid IIFE bundle (dist/mermaid.bundled.js). Exposes `mxMermaidToDrawio.parseText(text, config)`.
+ * @param {string} mermaidJs - The drawio-mermaid IIFE bundle. Exposes `mxMermaidToDrawio.parseText(text, config)`. Reads `globalThis.ELK` on init — caller must inline `elkJs` first.
  * @param {object} [options] - Optional configuration.
  * @param {string} [options.viewerJs] - If provided, inlines this JS instead of loading viewer-static.min.js from CDN.
+ * @param {string} [options.elkJs] - The drawio-elk IIFE bundle. Defines `var ELK` consumed by drawio-mermaid and mxElkLayout. Inlined before mermaid.
+ * @param {string} [options.mxElkLayoutJs] - The mxElkLayout wrapper. Requires ELK on globalThis (load order: elk → mermaid → mxElkLayout).
  * @returns {string} Self-contained HTML string.
  */
 export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
 {
   var viewerJs = (options && options.viewerJs) || null;
+  var elkJs = (options && options.elkJs) || null;
   var mxElkLayoutJs = (options && options.mxElkLayoutJs) || null;
   return `<!DOCTYPE html>
 <html lang="en">
@@ -185,8 +188,14 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
     <!-- pako deflate (inlined, for #create URL generation) -->
     <script>${pakoDeflateJs}</script>
 
+    ${elkJs
+      ? '<!-- drawio-elk (inlined). Defines var ELK consumed by drawio-mermaid and mxElkLayout. Must come before drawio-mermaid. -->\n    <script>' + elkJs + '<\/script>'
+      : ''
+    }
+
     <!-- drawio-mermaid (inlined). Exposes mxMermaidToDrawio.parseText(text, config).
-         Loaded after the viewer so mermaidShapes.js can see mxCellRenderer/mxActor. -->
+         Loaded after the viewer so mermaidShapes.js can see mxCellRenderer/mxActor,
+         and after drawio-elk so it can read globalThis.ELK on init. -->
     <script>
       // mxMermaidToDrawio.parseText() reads EditorUi.prototype.emptyDiagramXml
       // as a fallback when a diagram type isn't supported. Stub it defensively
@@ -200,7 +209,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
     <script>${mermaidJs}</script>
 
     ${mxElkLayoutJs
-      ? '<!-- mxElkLayout wrapper: buildElkGraph, applyElkLayout, executeAsync. Depends on mxGraph (viewer) + ELK (published on window by drawio-mermaid above). -->\n    <script>' + mxElkLayoutJs + '<\/script>'
+      ? '<!-- mxElkLayout wrapper: buildElkGraph, applyElkLayout, executeAsync. Depends on mxGraph (viewer) + ELK (from drawio-elk above). -->\n    <script>' + mxElkLayoutJs + '<\/script>'
       : ''
     }
 

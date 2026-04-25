@@ -29,17 +29,21 @@ const pakoDeflateJs = fs.readFileSync(
   "utf-8"
 );
 
-// Read the drawio-mermaid IIFE bundle from the sibling repo. Build
-// drawio-mermaid (`npm run build`) before running build-html.js.
-const mermaidBundlePath = path.join(
-  __dirname, "..", "..", "..", "drawio-mermaid", "dist", "mermaid.bundled.js"
-);
+// Read the drawio-elk bundle (vendored from drawio-dev — see
+// vendor/elk/README.md). Defines `var ELK` consumed by drawio-mermaid and
+// mxElkLayout. MUST be loaded before drawio-mermaid.
+const elkBundlePath = path.join(__dirname, "..", "vendor", "elk", "drawio-elk.min.js");
+const elkJs = fs.readFileSync(elkBundlePath, "utf-8");
+console.log(`ELK bundle: ${elkBundlePath} (${(elkJs.length / 1024).toFixed(1)} KB)`);
+
+// Read the drawio-mermaid IIFE bundle (vendored from drawio-dev — see
+// vendor/mermaid/README.md). Reads globalThis.ELK on init.
+const mermaidBundlePath = path.join(__dirname, "..", "vendor", "mermaid", "drawio-mermaid.min.js");
 const mermaidJs = fs.readFileSync(mermaidBundlePath, "utf-8");
 console.log(`Mermaid bundle: ${mermaidBundlePath} (${(mermaidJs.length / 1024).toFixed(1)} KB)`);
 
-// Read the mxElkLayout wrapper — it's vendored from drawio-dev origin/elk-layout
-// (see vendor/elk/README.md). The ELK engine itself is no longer vendored; it's
-// bundled into drawio-mermaid and published as `globalThis.ELK` at load time.
+// Read the mxElkLayout wrapper (vendored from drawio-dev origin/elk-layout —
+// see vendor/elk/README.md).
 const mxElkLayoutPath = path.join(__dirname, "..", "vendor", "elk", "mxElkLayout.js");
 const mxElkLayoutJs = fs.readFileSync(mxElkLayoutPath, "utf-8");
 console.log(`mxElkLayout: ${mxElkLayoutPath} (${(mxElkLayoutJs.length / 1024).toFixed(1)} KB)`);
@@ -77,7 +81,7 @@ const faviconBase64 = fs.readFileSync(faviconPath).toString("base64");
 console.log(`Favicon: ${faviconPath} (${(faviconBase64.length / 1024).toFixed(1)} KB base64)`);
 
 // Build the HTML and write it as an ES module export
-const html = buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, { mxElkLayoutJs });
+const html = buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, { elkJs, mxElkLayoutJs });
 const outPath = path.join(__dirname, "generated-html.js");
 
 fs.writeFileSync(outPath,
