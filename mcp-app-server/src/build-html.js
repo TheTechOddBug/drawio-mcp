@@ -13,7 +13,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildHtml, processAppBundle } from "./shared.js";
+import { buildHtml, processAppBundle, processMermaidBundle, processElkBundle } from "./shared.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -29,18 +29,23 @@ const pakoDeflateJs = fs.readFileSync(
   "utf-8"
 );
 
-// Read the drawio-elk bundle (vendored from drawio-dev — see
-// vendor/elk/README.md). Defines `var ELK` consumed by drawio-mermaid and
-// mxElkLayout. MUST be loaded before drawio-mermaid.
+// Read + process the drawio-elk bundle (vendored from drawio-dev — see
+// vendor/elk/README.md). Ships as ESM; processElkBundle strips the export
+// and aliases the default export to `var ELK` so drawio-mermaid and
+// mxElkLayout pick it up from globalThis. MUST be loaded before mermaid.
 const elkBundlePath = path.join(__dirname, "..", "vendor", "elk", "drawio-elk.min.js");
-const elkJs = fs.readFileSync(elkBundlePath, "utf-8");
-console.log(`ELK bundle: ${elkBundlePath} (${(elkJs.length / 1024).toFixed(1)} KB)`);
+const elkRaw = fs.readFileSync(elkBundlePath, "utf-8");
+const elkJs = processElkBundle(elkRaw);
+console.log(`ELK bundle: ${elkBundlePath} (${(elkRaw.length / 1024).toFixed(1)} KB)`);
 
-// Read the drawio-mermaid IIFE bundle (vendored from drawio-dev — see
-// vendor/mermaid/README.md). Reads globalThis.ELK on init.
+// Read + process the drawio-mermaid bundle (vendored from drawio-dev — see
+// vendor/mermaid/README.md). Ships as ESM; processMermaidBundle aliases
+// the mxMermaidToDrawio export to a global so the viewer code can call it.
+// Reads globalThis.ELK on init.
 const mermaidBundlePath = path.join(__dirname, "..", "vendor", "mermaid", "drawio-mermaid.min.js");
-const mermaidJs = fs.readFileSync(mermaidBundlePath, "utf-8");
-console.log(`Mermaid bundle: ${mermaidBundlePath} (${(mermaidJs.length / 1024).toFixed(1)} KB)`);
+const mermaidRaw = fs.readFileSync(mermaidBundlePath, "utf-8");
+const mermaidJs = processMermaidBundle(mermaidRaw);
+console.log(`Mermaid bundle: ${mermaidBundlePath} (${(mermaidRaw.length / 1024).toFixed(1)} KB)`);
 
 // Read the mxElkLayout wrapper (vendored from drawio-dev origin/elk-layout —
 // see vendor/elk/README.md).

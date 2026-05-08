@@ -6,7 +6,7 @@ import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { buildHtml, processAppBundle, createServer } from "./shared.js";
+import { buildHtml, processAppBundle, processMermaidBundle, processElkBundle, createServer } from "./shared.js";
 
 // Read the browser bundles once at startup and inline them into the HTML
 const extAppsEntry = fileURLToPath(import.meta.resolve("@modelcontextprotocol/ext-apps/app-with-deps"));
@@ -26,20 +26,21 @@ const pakoDeflateJs = fs.readFileSync(
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Inline the drawio-elk bundle (Eclipse Layout Kernel, ~790 KB). Defines
-// `var ELK` (visible as `globalThis.ELK`) consumed by drawio-mermaid and
-// mxElkLayout. Vendored from drawio-dev — see vendor/elk/README.md.
-// MUST be loaded before drawio-mermaid (mermaid reads globalThis.ELK).
-const elkJs = fs.readFileSync(
+// Inline the drawio-elk bundle (Eclipse Layout Kernel, ~790 KB). Ships as
+// ESM with a default export (the ELK class); processElkBundle strips the
+// export and aliases it to `var ELK` so it ends up on globalThis (consumed
+// by drawio-mermaid and mxElkLayout). MUST be loaded before drawio-mermaid.
+const elkJs = processElkBundle(fs.readFileSync(
   path.join(__dirname, "..", "vendor", "elk", "drawio-elk.min.js"), "utf-8"
-);
+));
 
-// Inline the drawio-mermaid IIFE bundle (native Mermaid parser + layout,
-// replaces the upstream ~2.7 MB mermaid.min.js + extensions.min.js runtime).
-// Vendored from drawio-dev — see vendor/mermaid/README.md.
-const mermaidJs = fs.readFileSync(
+// Inline the drawio-mermaid bundle (native Mermaid parser + layout, replaces
+// the upstream ~2.7 MB mermaid.min.js + extensions.min.js runtime). Ships as
+// ESM since the recent dist refactor; processMermaidBundle strips the export
+// and aliases `mxMermaidToDrawio` to a global the viewer code can call.
+const mermaidJs = processMermaidBundle(fs.readFileSync(
   path.join(__dirname, "..", "vendor", "mermaid", "drawio-mermaid.min.js"), "utf-8"
-);
+));
 
 // Inline the mxElkLayout wrapper (vendored from drawio-dev origin/elk-layout
 // — see vendor/elk/README.md). Powers the optional postLayout pass on

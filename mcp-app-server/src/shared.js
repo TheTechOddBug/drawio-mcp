@@ -60,9 +60,40 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         overflow: hidden;
       }
 
+      :root {
+        /* Card background + border (subtle on either theme). The
+           values are picked to feel like a quiet "page within the
+           page", not to compete with the chat surface. */
+        --viewer-card-bg: #f8f8f7;
+        --viewer-card-border: rgba(0, 0, 0, 0.08);
+        --viewer-card-shadow: 0 1px 3px rgba(0, 0, 0, 0.04);
+        --viewer-btn-fg: #1a1a1a;
+        --viewer-btn-border: rgba(0, 0, 0, 0.14);
+        --viewer-btn-border-hover: rgba(0, 0, 0, 0.28);
+        --viewer-btn-bg-hover: rgba(0, 0, 0, 0.06);
+      }
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --viewer-card-bg: #1f1f1f;
+          --viewer-card-border: rgba(255, 255, 255, 0.08);
+          --viewer-card-shadow: none;
+          /* Toolbar text/border in dark mode — the host doesn't always
+             set --color-text-primary, so the previous fallback (#1a1a1a
+             on a dark page) made the buttons nearly invisible. */
+          --viewer-btn-fg: #e6e6e6;
+          --viewer-btn-border: rgba(255, 255, 255, 0.18);
+          --viewer-btn-border-hover: rgba(255, 255, 255, 0.32);
+          --viewer-btn-bg-hover: rgba(255, 255, 255, 0.08);
+        }
+      }
       body {
         font-family: var(--font-sans, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif);
         overflow: hidden;
+        /* Small page margin so the card has breathing room from the
+           iframe edge. notifySize() reports document.documentElement
+           scrollHeight which includes this padding, so the iframe
+           grows to match. */
+        padding: 8px;
       }
 
       #loading {
@@ -89,17 +120,56 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         min-width: 200px;
         max-width: 100%;
         overflow: hidden;
+        /* Rounded card around the diagram. The visible chat-page
+           background shows in body padding outside this rectangle. */
+        background: var(--viewer-card-bg);
+        border: 1px solid var(--viewer-card-border);
+        border-radius: 12px;
+        box-shadow: var(--viewer-card-shadow);
       }
       #diagram-container.streaming {
         min-height: 320px;
-        max-height: 650px;
+        /* Hard cap (inline mode only) so the iframe never grows past
+           the chat viewport. The host (Claude.ai) only honors
+           sendSizeChanged growth, not shrinks — conservative start.
+           Fullscreen overrides this below. */
+        max-height: 480px;
         position: relative;
+      }
+      /* In fullscreen, the iframe IS the viewport (with body padding
+         reserved for the prompt overlay), so let the streaming card
+         fill all the available height instead of clipping at 480 px. */
+      body.fullscreen #diagram-container.streaming {
+        max-height: none;
+      }
+      /* In fullscreen we want the diagram surface to go edge-to-edge:
+         no card inset, no border, no rounded corners. Otherwise dragging
+         past the container boundary clips against the visible card edge
+         with a strip of body background showing around it. */
+      body.fullscreen {
+        padding: 0;
+      }
+      body.fullscreen #diagram-container {
+        border: none;
+        border-radius: 0;
+        box-shadow: none;
       }
       #diagram-container.streaming > div {
         width: 100% !important;
         height: 100% !important;
         overflow: hidden !important;
       }
+      /* Custom viewer mode: mouse-drag pans the diagram. Wheel + pinch
+         intentionally NOT handled — they bubble to the parent so the
+         chat page scrolls/zooms naturally over the diagram (touch-action
+         defaults to auto). user-select disabled so a pan-drag doesn't
+         leave a text-selection trail behind. */
+      #diagram-container.custom-viewer {
+        cursor: grab;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+      #diagram-container.custom-viewer.dragging { cursor: grabbing; }
       /* GraphViewer sets inline width on its wrappers based on the
          diagram's natural width, which can exceed the iframe width and
          create a horizontal scrollbar between the SVG and the toolbar.
@@ -124,20 +194,49 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         display: none;
         padding: 8px;
         gap: 6px;
+        opacity: 0;
+        transform: translateY(8px);
+        transition: opacity 0.28s ease-out, transform 0.28s ease-out;
       }
-      #toolbar button, #toolbar a {
+      #toolbar.shown {
+        opacity: 1;
+        transform: translateY(0);
+      }
+      #toolbar button {
         display: inline-flex;
         align-items: center;
-        gap: 4px;
-        padding: 6px 12px;
+        justify-content: center;
+        gap: 6px;
+        padding: 0 12px;
+        height: 30px;
         font-size: 12px;
         font-family: inherit;
-        border: 1px solid;
+        color: var(--color-text-primary, var(--viewer-btn-fg));
+        border: 1px solid var(--color-border, var(--viewer-btn-border));
         border-radius: 6px;
         background: transparent;
         cursor: pointer;
-        text-decoration: none;
-        transition: background 0.15s;
+        transition: background 0.15s ease, border-color 0.15s ease,
+                    color 0.15s ease, transform 0.08s ease;
+      }
+      #toolbar button:hover {
+        background: var(--color-bg-hover, var(--viewer-btn-bg-hover));
+        border-color: var(--color-border-hover, var(--viewer-btn-border-hover));
+      }
+      #toolbar button:active { transform: translateY(1px); }
+      #toolbar button.icon-only {
+        width: 30px;
+        padding: 0;
+      }
+      #toolbar svg {
+        width: 16px;
+        height: 16px;
+        stroke: currentColor;
+        stroke-width: 2;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+        fill: none;
+        flex-shrink: 0;
       }
 
       #error {
@@ -173,9 +272,52 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
     <pre id="mermaid-preview"></pre>
     <div id="diagram-container"></div>
     <div id="toolbar">
-      <button id="open-drawio">Open in draw.io</button>
-      <button id="copy-xml-btn">Copy to Clipboard</button>
-      <button id="fullscreen-btn">Fullscreen</button>
+      <button id="zoom-out-btn" class="icon-only" style="display:none" title="Zoom out" aria-label="Zoom out">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="6" y1="12" x2="18" y2="12"/></svg>
+      </button>
+      <button id="zoom-in-btn" class="icon-only" style="display:none" title="Zoom in" aria-label="Zoom in">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><line x1="12" y1="6" x2="12" y2="18"/><line x1="6" y1="12" x2="18" y2="12"/></svg>
+      </button>
+      <button id="zoom-fit-btn" class="icon-only" style="display:none" title="Fit to view" aria-label="Fit to view">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 8 4 4 8 4"/><polyline points="16 4 20 4 20 8"/><polyline points="4 16 4 20 8 20"/><polyline points="16 20 20 20 20 16"/><rect x="8" y="9" width="8" height="6" rx="1"/></svg>
+      </button>
+      <button id="open-drawio" title="Open this diagram in draw.io to edit" aria-label="Open in draw.io">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 4h6v6"/><path d="M10 14L20 4"/><path d="M19 13v6a1 1 0 0 1-1 1H5a1 1 0 0 1-1-1V6a1 1 0 0 1 1-1h6"/></svg>
+        <span>Open in draw.io</span>
+      </button>
+      <button id="copy-xml-btn" title="Copy diagram XML to clipboard" aria-label="Copy XML">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg>
+        <span id="copy-xml-label">Copy</span>
+      </button>
+      <button id="fullscreen-btn" class="icon-only" title="Toggle fullscreen" aria-label="Toggle fullscreen">
+        <svg id="fs-icon-enter" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 8 4 4 8 4"/><polyline points="16 4 20 4 20 8"/><polyline points="20 16 20 20 16 20"/><polyline points="8 20 4 20 4 16"/></svg>
+        <svg id="fs-icon-exit" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><polyline points="8 4 8 8 4 8"/><polyline points="16 4 16 8 20 8"/><polyline points="20 16 16 16 16 20"/><polyline points="4 16 8 16 8 20"/></svg>
+      </button>
+      <button id="layout-btn" class="icon-only" style="display:none" title="Layout: as authored" aria-label="Cycle layout">
+        <svg id="layout-icon-none" viewBox="0 0 24 24" aria-hidden="true">
+          <rect x="3" y="3" width="6" height="4" rx="1"/>
+          <rect x="13" y="6" width="6" height="4" rx="1"/>
+          <rect x="5" y="13" width="6" height="4" rx="1"/>
+          <rect x="15" y="16" width="5" height="4" rx="1"/>
+        </svg>
+        <svg id="layout-icon-horizontal" viewBox="0 0 24 24" aria-hidden="true" style="display:none">
+          <rect x="2" y="9" width="5" height="6" rx="1"/>
+          <rect x="9.5" y="9" width="5" height="6" rx="1"/>
+          <rect x="17" y="9" width="5" height="6" rx="1"/>
+          <line x1="7" y1="12" x2="9.5" y2="12"/>
+          <line x1="14.5" y1="12" x2="17" y2="12"/>
+        </svg>
+        <svg id="layout-icon-vertical" viewBox="0 0 24 24" aria-hidden="true" style="display:none">
+          <rect x="9" y="2" width="6" height="5" rx="1"/>
+          <rect x="9" y="9.5" width="6" height="5" rx="1"/>
+          <rect x="9" y="17" width="6" height="5" rx="1"/>
+          <line x1="12" y1="7" x2="12" y2="9.5"/>
+          <line x1="12" y1="14.5" x2="12" y2="17"/>
+        </svg>
+      </button>
+      <button id="help-btn" class="icon-only" title="Viewer help" aria-label="Viewer help">
+        <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="12" cy="12" r="9"/><path d="M9.5 9.5a2.5 2.5 0 1 1 3.5 2.3c-.7.4-1 1.1-1 1.7v.5"/><circle cx="12" cy="17" r="0.5" fill="currentColor"/></svg>
+      </button>
     </div>
 
     <!-- draw.io viewer -->
@@ -378,6 +520,26 @@ function healMermaidText(partialText)
 }
 
 /**
+ * Returns true if the Mermaid text declares a flowchart (or its legacy
+ * "graph" synonym). Used to surface the layout-cycle button on
+ * flowcharts even when the LLM didn't request a postLayout — they're
+ * the diagram type that benefits most from re-layout.
+ */
+function isMermaidFlowchart(text)
+{
+  if (text == null || typeof text !== 'string') return false;
+  var lines = text.split(/\\r?\\n/);
+  for (var i = 0; i < lines.length; i++)
+  {
+    var line = lines[i].trim();
+    if (line === '' || line.indexOf('%%') === 0) continue;
+    var first = line.split(/\\s+/)[0];
+    return first === 'flowchart' || first === 'graph';
+  }
+  return false;
+}
+
+/**
  * 32-bit FNV-1a hash, hex string. Stable across runs and across browsers.
  * Used to derive content-addressed cell IDs.
  */
@@ -550,15 +712,152 @@ const mermaidPreviewEl = document.getElementById("mermaid-preview");
 const openDrawioBtn  = document.getElementById("open-drawio");
 const fullscreenBtn  = document.getElementById("fullscreen-btn");
 const copyXmlBtn     = document.getElementById("copy-xml-btn");
+const layoutBtn      = document.getElementById("layout-btn");
 var drawioEditUrl = null;
 var currentXml = null;
 var invalidDiagramXmlMessage = ${JSON.stringify(INVALID_DIAGRAM_XML_MESSAGE)};
 
 // --- State ---
-var graphViewer = null;
 var streamingInitialized = false;
+var customViewerInteractive = false;
+// dblclick toggle: alternates between "zoomed in toward last cursor"
+// and "fit-whole". Reset by the Fit toolbar button so the state stays
+// in sync with what the user sees on screen.
+var dblclickZoomedIn = false;
+// Tracks the host's current display mode ("inline" | "fullscreen" | "pip").
+// Updated from hostContext on connect and on host-context-changed events.
+// Wheel/pinch behave differently per mode: in inline, plain wheel falls
+// through to the chat so the page can scroll; in fullscreen we own the
+// surface so wheel zooms the diagram directly.
+var currentDisplayMode = 'inline';
 
 var app = new App({ name: "draw.io Diagram Viewer", version: "1.0.0" });
+
+/**
+ * Apply layout adjustments for the current display mode. In fullscreen
+ * we reserve bottom space for the host's chat input overlay (Claude.ai
+ * floats its prompt box over the iframe). Uses safeAreaInsets.bottom if
+ * the host provides it, otherwise an 80 px fallback that clears the
+ * Claude.ai composer at typical zoom levels.
+ */
+function applyDisplayModeLayout()
+{
+  var ctx = (app.getHostContext != null) ? app.getHostContext() : null;
+  currentDisplayMode = (ctx != null && ctx.displayMode) || 'inline';
+
+  var insetBottom = 0;
+  if (ctx != null && ctx.safeAreaInsets && typeof ctx.safeAreaInsets.bottom === 'number')
+  {
+    insetBottom = ctx.safeAreaInsets.bottom;
+  }
+
+  var fsEnter = document.getElementById('fs-icon-enter');
+  var fsExit = document.getElementById('fs-icon-exit');
+
+  if (currentDisplayMode === 'fullscreen')
+  {
+    var pad = Math.max(insetBottom, 80);
+    document.body.style.paddingBottom = pad + 'px';
+    document.body.style.boxSizing = 'border-box';
+    document.body.classList.add('fullscreen');
+    if (fsEnter != null) fsEnter.style.display = 'none';
+    if (fsExit != null) fsExit.style.display = '';
+    fullscreenBtn.setAttribute('title', 'Exit fullscreen');
+    fullscreenBtn.setAttribute('aria-label', 'Exit fullscreen');
+  }
+  else
+  {
+    document.body.style.paddingBottom = '';
+    document.body.style.boxSizing = '';
+    document.body.classList.remove('fullscreen');
+    if (fsEnter != null) fsEnter.style.display = '';
+    if (fsExit != null) fsExit.style.display = 'none';
+    fullscreenBtn.setAttribute('title', 'Toggle fullscreen');
+    fullscreenBtn.setAttribute('aria-label', 'Toggle fullscreen');
+  }
+
+  // Re-fit the camera so the diagram tracks the new layout. Snap-fit
+  // (immediate=true) — user-initiated layout change should feel
+  // instant, not animated. Skip if the graph isn't built yet.
+  if (streamGraph != null) streamFollowNewCells(streamGraph, true);
+  // Display mode change effectively re-fits the diagram, so reset the
+  // dblclick toggle to "not zoomed in" — otherwise the first dblclick
+  // after exiting fullscreen would try to zoom out (no-op) instead of
+  // zooming in.
+  dblclickZoomedIn = false;
+}
+
+/**
+ * Live-measure everything that sits outside the diagram container in
+ * the iframe document: body padding (top + bottom — bumped in
+ * fullscreen for the prompt-overlay pad), the toolbar (when shown via
+ * display:flex; offsetHeight is 0 while it's display:none), and the
+ * container's vertical border. Reading offsetHeight forces a reflow
+ * so this is accurate even immediately after toggling display.
+ */
+function measureChrome()
+{
+  var bodyStyle = window.getComputedStyle(document.body);
+  var bodyPad = parseFloat(bodyStyle.paddingTop) +
+                parseFloat(bodyStyle.paddingBottom);
+
+  var tbH = (toolbarEl != null) ? toolbarEl.offsetHeight : 0;
+
+  var contStyle = window.getComputedStyle(containerEl);
+  var contBorder = parseFloat(contStyle.borderTopWidth) +
+                   parseFloat(contStyle.borderBottomWidth);
+
+  return bodyPad + tbH + contBorder;
+}
+
+/**
+ * Compute the maximum height we should request for the diagram
+ * container. Subtracts the live-measured chrome (toolbar + body
+ * padding + container border) from the available iframe height so
+ * the toolbar and padding never push the diagram off-screen.
+ *
+ * Available height: prefer host-provided containerDimensions in
+ * inline mode (the chat's reserved area), otherwise window.innerHeight
+ * (the iframe's actual visible height — accurate fallback when the
+ * host doesn't expose dimensions).
+ */
+function maxViewportHeight()
+{
+  var ctx = (app.getHostContext != null) ? app.getHostContext() : null;
+
+  var hostMaxH = null;
+  var dims = ctx && ctx.containerDimensions;
+  if (dims != null)
+  {
+    if (typeof dims.height === 'number') hostMaxH = dims.height;
+    else if (typeof dims.maxHeight === 'number') hostMaxH = dims.maxHeight;
+  }
+
+  var available;
+  if (currentDisplayMode === 'fullscreen')
+  {
+    available = window.innerHeight;
+  }
+  else
+  {
+    // Inline mode: cap at STREAM_VIEWPORT_MAX_HEIGHT_INLINE no matter
+    // what the host reports. Claude.ai sometimes hands back a huge
+    // containerDimensions.maxHeight (full viewport), and we don't want
+    // to consume that — the prompt box still needs to be visible. Also
+    // can't trust window.innerHeight as a fallback: it reflects the
+    // iframe's own height after our last sendSizeChanged, which feeds
+    // back to make us grow without bound.
+    available = STREAM_VIEWPORT_MAX_HEIGHT_INLINE;
+    if (hostMaxH != null && hostMaxH < available) available = hostMaxH;
+  }
+
+  return Math.max(STREAM_VIEWPORT_MIN_HEIGHT, available - measureChrome());
+}
+
+app.onhostcontextchanged = function()
+{
+  applyDisplayModeLayout();
+};
 
 function showError(message, err)
 {
@@ -572,7 +871,7 @@ function showError(message, err)
   if (typeof console !== 'undefined' && console.error)
   {
     var stack = (err && err.stack) ? err.stack : new Error(message).stack;
-    console.error('[drawio-viewer] ' + message + '\\n' + stack);
+    console.error('[drawio][viewer] ' + message + '\\n' + stack);
   }
 }
 
@@ -602,8 +901,28 @@ function waitForGraphViewer()
   });
 }
 
+// Cache one (text, xml) pair so finalize doesn't re-parse the same
+// Mermaid text the streaming path already parsed. parseText is
+// expensive (50–300 ms for moderate diagrams) and the finalized text
+// is almost always identical to the last streaming partial.
+var lastConvertedMermaidText = null;
+var lastConvertedMermaidXml = null;
+
+function rememberMermaidConversion(text, xml)
+{
+  lastConvertedMermaidText = text;
+  lastConvertedMermaidXml = xml;
+}
+
 function convertMermaidToXml(mermaidText)
 {
+  // Cache hit — skip parseText entirely.
+  if (mermaidText === lastConvertedMermaidText &&
+      lastConvertedMermaidXml != null)
+  {
+    return Promise.resolve(lastConvertedMermaidXml);
+  }
+
   // The drawio-mermaid bundle (inlined at load time) exposes
   // mxMermaidToDrawio.parseText(text, config), which runs the full
   // parse + layout pipeline synchronously and returns draw.io XML.
@@ -631,7 +950,9 @@ function convertMermaidToXml(mermaidText)
     // share identity for the same cells. parseText auto-assigns sequential
     // IDs that shift across prefix re-parses; stabilizeMermaidIds rewrites
     // them to deterministic content-addressed values.
-    return Promise.resolve(stabilizeMermaidIds(xml));
+    var stabilized = stabilizeMermaidIds(xml);
+    rememberMermaidConversion(mermaidText, stabilized);
+    return Promise.resolve(stabilized);
   }
   catch (e)
   {
@@ -647,157 +968,6 @@ function generateDrawioEditUrl(xml)
   var createObj = { type: "xml", compressed: true, data: base64, effect: "pop" };
 
   return "https://app.diagrams.net/?pv=0&grid=0#create=" + encodeURIComponent(JSON.stringify(createObj));
-}
-
-/**
- * Intro animation for the final GraphViewer: pop-bounces all vertices
- * and wipe-fades all edges. Called once after the viewer renders.
- */
-var introAnimPlayed = false;
-
-function playViewerIntroAnimation(graph)
-{
-  if (graph == null || introAnimPlayed) return;
-  introAnimPlayed = true;
-
-  var model = graph.getModel();
-  var vertices = [];
-  var edges = [];
-
-  // Collect all visible vertices and edges (skip root cells 0, 1)
-  for (var id in model.cells)
-  {
-    if (id === '0' || id === '1') continue;
-
-    var cell = model.cells[id];
-
-    if (cell.edge) edges.push(cell);
-    else if (cell.vertex) vertices.push(cell);
-  }
-
-  graph.view.validate();
-
-  // Hide all cells initially
-  var allCells = vertices.concat(edges);
-
-  for (var i = 0; i < allCells.length; i++)
-  {
-    var state = graph.view.getState(allCells[i]);
-
-    if (state != null && state.shape != null && state.shape.node != null)
-    {
-      state.shape.node.style.opacity = '0';
-    }
-
-    if (state != null && state.text != null && state.text.node != null)
-    {
-      state.text.node.style.opacity = '0';
-    }
-  }
-
-  // Pop animation for vertices
-  if (vertices.length > 0 && typeof graph.createPopAnimations === 'function')
-  {
-    var popAnims = graph.createPopAnimations(vertices, true);
-
-    if (popAnims.length > 0)
-    {
-      graph.executeAnimations(popAnims, function()
-      {
-        // Ensure all vertices visible after pop
-        for (var m = 0; m < vertices.length; m++)
-        {
-          var vs = graph.view.getState(vertices[m]);
-
-          if (vs != null && vs.shape != null && vs.shape.node != null)
-          {
-            vs.shape.node.style.opacity = '1';
-            vs.shape.node.style.visibility = 'visible';
-          }
-
-          if (vs != null && vs.text != null && vs.text.node != null)
-          {
-            vs.text.node.style.opacity = '1';
-            vs.text.node.style.visibility = 'visible';
-          }
-        }
-
-        // After vertices pop, fade in edges
-        fadeInEdges(graph, edges);
-      }, 20, 20);
-    }
-    else
-    {
-      // Fallback: just show everything
-      showAllCells(graph, allCells);
-    }
-  }
-  else
-  {
-    // Fallback: just show everything
-    showAllCells(graph, allCells);
-  }
-}
-
-function fadeInEdges(graph, edges)
-{
-  for (var n = 0; n < edges.length; n++)
-  {
-    var es = graph.view.getState(edges[n]);
-
-    if (es != null && es.shape != null && es.shape.node != null)
-    {
-      es.shape.node.style.transition = 'opacity 0.4s ease-out';
-      es.shape.node.style.opacity = '1';
-      es.shape.node.style.visibility = 'visible';
-    }
-
-    if (es != null && es.text != null && es.text.node != null)
-    {
-      es.text.node.style.transition = 'opacity 0.4s ease-out';
-      es.text.node.style.opacity = '1';
-      es.text.node.style.visibility = 'visible';
-    }
-  }
-
-  // Clean up transitions
-  setTimeout(function()
-  {
-    for (var p = 0; p < edges.length; p++)
-    {
-      var es2 = graph.view.getState(edges[p]);
-
-      if (es2 != null && es2.shape != null && es2.shape.node != null)
-      {
-        es2.shape.node.style.transition = '';
-      }
-
-      if (es2 != null && es2.text != null && es2.text.node != null)
-      {
-        es2.text.node.style.transition = '';
-      }
-    }
-  }, 450);
-}
-
-function showAllCells(graph, cells)
-{
-  for (var i = 0; i < cells.length; i++)
-  {
-    var state = graph.view.getState(cells[i]);
-
-    if (state != null && state.shape != null && state.shape.node != null)
-    {
-      state.shape.node.style.opacity = '1';
-      state.shape.node.style.visibility = 'visible';
-    }
-
-    if (state != null && state.text != null && state.text.node != null)
-    {
-      state.text.node.style.opacity = '1';
-      state.text.node.style.visibility = 'visible';
-    }
-  }
 }
 
 /**
@@ -869,7 +1039,11 @@ function createPostLayout(graph, algorithm)
     case 'force':
       options = {
         'elk.algorithm': 'force',
-        'elk.spacing.nodeNode': '80',
+        // ELK's F-R model computes k = sqrt(area/(2n)) * nodeNode * 0.01,
+        // so nodeNode is a multiplier on natural edge length, not pixels.
+        // 10 matches the legacy mxFastOrganicLayout's fixed k≈50 — keeps
+        // the graph tight rather than blown out across the canvas.
+        'elk.spacing.nodeNode': '10',
         'elk.force.iterations': '300',
         'elk.force.repulsivePower': '0'
       };
@@ -915,7 +1089,59 @@ function createPostLayout(graph, algorithm)
  * @param {function(boolean)} [onDone] - Called with true when the
  *   layout was applied, false when it was skipped or ELK errored.
  */
-function applyPostLayout(graph, algorithm, hints, onDone)
+/**
+ * Force every edge in the graph to render as orthogonal-with-rounded-
+ * corners: rounded=1 ON, curved=0 OFF. Called after layered ELK
+ * layouts so that ORTHOGONAL bend points actually look like clean
+ * right-angle routes (mermaid sets curved=1 by default, which would
+ * spline through the bend points and produce wiggly edges).
+ */
+function normalizeEdgesToRounded(graph)
+{
+  if (graph == null) return;
+  var model = graph.getModel();
+  var changed = 0;
+
+  for (var id in model.cells)
+  {
+    var cell = model.cells[id];
+    if (cell == null || !cell.edge) continue;
+
+    var style = cell.style || '';
+    var parts = style.split(';');
+    var seenRounded = false;
+    var out = [];
+
+    for (var i = 0; i < parts.length; i++)
+    {
+      var p = parts[i].trim();
+      if (p === '') continue;
+      if (p.indexOf('curved=') === 0) continue; // strip curved
+      if (p.indexOf('rounded=') === 0)
+      {
+        out.push('rounded=1');
+        seenRounded = true;
+      }
+      else
+      {
+        out.push(p);
+      }
+    }
+
+    if (!seenRounded) out.push('rounded=1');
+
+    var newStyle = out.join(';');
+    if (newStyle !== style)
+    {
+      model.setStyle(cell, newStyle);
+      changed++;
+    }
+  }
+
+  try { console.log('[drawio][postlayout] normalized ' + changed + ' edges to rounded'); } catch (_) {}
+}
+
+function applyPostLayout(graph, algorithm, hints, onDone, onMorphStart)
 {
   // Backwards-compatible arg shuffle: allow applyPostLayout(graph, alg, cb).
   if (typeof hints === 'function')
@@ -1054,6 +1280,17 @@ function applyPostLayout(graph, algorithm, hints, onDone)
     try
     {
       layout.applyElkLayout(result);
+      // For layered (verticalFlow / horizontalFlow) we asked ELK for
+      // ORTHOGONAL routing — the geometry is right-angle paths with
+      // bend points. Mermaid emits edges with curved=1 by default,
+      // which makes mxGraph spline through those bend points and
+      // produces wiggly curves. Force rounded=1 / curved=0 so the
+      // edges render as right-angles with rounded corners — the
+      // intent of the orthogonal routing.
+      if (layout.algorithm === 'layered')
+      {
+        normalizeEdgesToRounded(graph);
+      }
       committed = true;
     }
     catch (e)
@@ -1067,30 +1304,54 @@ function applyPostLayout(graph, algorithm, hints, onDone)
       {
         // Commit with morph animation — morph captures the current
         // view state (pre-ELK positions) and animates to the new
-        // model state, calling endUpdate on DONE. On DONE we re-fit
-        // so the viewer's scale/translate match the new bounds;
-        // without this, a layered layout that grew taller than the
-        // original viewport clips on the sides.
+        // model state, calling endUpdate on DONE.
+        //
+        // Don't call graph.fit() here: graph.fit mutates view.scale
+        // and view.translate, which would compose with our CSS
+        // viewTransform and double-scale the diagram. The caller
+        // re-runs streamFollowNewCells(graph) after done(true) to
+        // ease the CSS transform to the new fit. sizeDidChange is
+        // still needed so the SVG dims track the new bbox.
         var refit = function()
         {
-          try
-          {
-            graph.fit(20);
-            graph.sizeDidChange();
-          }
-          catch (_) {}
+          try { graph.sizeDidChange(); } catch (_) {}
         };
 
         try
         {
-          var morph = new mxMorphing(graph);
+          // 12 steps × ~30 ms ≈ 360 ms of cell morphing. Long enough
+          // to feel like a real layout transition, short enough to
+          // not drag. We pair this with a parallel camera animation
+          // (started via onMorphStart) for a single combined
+          // "diagram settles into its layout" beat.
+          var morph = new mxMorphing(graph, 12, 1.5, 30);
           morph.addListener(mxEvent.DONE, function()
           {
             model.endUpdate();
             refit();
+            // After endUpdate the view re-renders edges with their new
+            // waypoints/styles. Hide them synchronously so a paint
+            // can't sneak in showing stale-looking edges, then pen-draw
+            // them in the next frame using the streaming schedule.
+            hideAllEdgesForMorph(graph);
+            requestAnimationFrame(function()
+            {
+              penDrawAllEdgesAfterMorph(graph);
+            });
             notifySize('postLayout');
             done(true);
           });
+          // Fire onMorphStart RIGHT BEFORE startAnimation: positions
+          // are already committed to the model (caller can compute
+          // fit-whole), but the visual morph hasn't begun yet, so a
+          // camera animation kicked off here lands in sync.
+          if (typeof onMorphStart === 'function')
+          {
+            try { onMorphStart(); } catch (_) {}
+          }
+          // Hide edges before morph starts so vertex animation isn't
+          // visually polluted by misaligned waypoints during the move.
+          hideAllEdgesForMorph(graph);
           morph.startAnimation();
         }
         catch (e)
@@ -1111,150 +1372,6 @@ function applyPostLayout(graph, algorithm, hints, onDone)
   {
     done(false);
   });
-}
-
-async function renderDiagram(xml, opts)
-{
-  opts = opts || {};
-
-  try
-  {
-    await waitForGraphViewer();
-  }
-  catch(e)
-  {
-    showError("Failed to load the draw.io viewer. Check your network connection.");
-    return;
-  }
-
-  try
-  {
-    containerEl.innerHTML = "";
-
-    var config = {
-      highlight: "#0000ff",
-      "dark-mode": "auto",
-      nav: true,
-      resize: true,
-      fit: true,
-      "max-width": "100%",
-      toolbar: "zoom layers tags",
-      xml: xml
-    };
-
-    var graphDiv = document.createElement("div");
-    graphDiv.className = "mxgraph";
-    graphDiv.setAttribute("data-mxgraph", JSON.stringify(config));
-    containerEl.appendChild(graphDiv);
-
-    loadingEl.style.display = "none";
-    containerEl.style.display = "block";
-    toolbarEl.style.display = "flex";
-    drawioEditUrl = generateDrawioEditUrl(xml);
-    currentXml = xml;
-
-    var bg = getComputedStyle(document.body).backgroundColor;
-    GraphViewer.darkBackgroundColor = bg;
-
-    // Use createViewerForElement with callback to capture the viewer instance
-    var graphDiv2 = containerEl.querySelector('.mxgraph');
-
-    if (graphDiv2 != null)
-    {
-      // For post-stream renders, fade the viewer in instead of popping
-      // each cell (the stream already animated them).
-      if (opts.fadeIn)
-      {
-        graphDiv2.style.opacity = '0';
-      }
-
-      GraphViewer.createViewerForElement(graphDiv2, function(viewer)
-      {
-        graphViewer = viewer;
-
-        if (opts.skipIntroAnim)
-        {
-          // Mark intro as played so playViewerIntroAnimation is a no-op.
-          introAnimPlayed = true;
-        }
-        else if (viewer != null && viewer.graph != null)
-        {
-          // Intro animation: bounce vertices, wipe edges
-          playViewerIntroAnimation(viewer.graph);
-        }
-
-        if (opts.fadeIn)
-        {
-          // Whole-viewer fade-in to handoff cleanly from the stream.
-          graphDiv2.style.transition = 'opacity 0.35s ease-out';
-          requestAnimationFrame(function()
-          {
-            graphDiv2.style.opacity = '1';
-            setTimeout(function()
-            {
-              graphDiv2.style.transition = '';
-            }, 400);
-          });
-        }
-
-        // Post-layout pass: the AI opts into a specific algorithm via
-        // the postLayout tool parameter (verticalFlow, horizontalFlow,
-        // tree, force, …) and we run that full re-layout. Otherwise
-        // the diagram renders as-is.
-        var autoAlgorithm = opts.postLayout || null;
-
-        if (autoAlgorithm && viewer != null && viewer.graph != null)
-        {
-          var delay = opts.fadeIn ? 450 : 50;
-          var layoutHints = { startNodeIds: opts.startNodeIds || null, endNodeIds: opts.endNodeIds || null };
-          setTimeout(function()
-          {
-            try
-            {
-              applyPostLayout(viewer.graph, autoAlgorithm, layoutHints, function(applied)
-              {
-                try
-                {
-                  if (applied)
-                  {
-                    var newXml = serializeGraphXml(viewer.graph);
-
-                    if (newXml != null)
-                    {
-                      currentXml = newXml;
-                      drawioEditUrl = generateDrawioEditUrl(newXml);
-                    }
-                  }
-                }
-                catch (e)
-                {
-                  // Keep the original on serialization failure.
-                }
-              });
-            }
-            catch (e)
-            {
-              if (typeof console !== 'undefined' && console.warn)
-              {
-                console.warn('[post-layout] error:', e);
-              }
-            }
-          }, delay);
-        }
-
-        notifySize('viewer-callback');
-      });
-    }
-    else
-    {
-      GraphViewer.processElements();
-      notifySize('processElements');
-    }
-  }
-  catch (e)
-  {
-    showError("Failed to render diagram: " + e.message, e);
-  }
 }
 
 function notifySize(tag)
@@ -1285,6 +1402,11 @@ var streamGraph = null;
 var streamPendingEdges = null;
 var streamFitRaf = null;
 var pendingToolInputTimer = null;
+// Set once we've fired the early finalize from ontoolinputpartial after
+// detecting the mermaid string closed (sibling JSON key appeared). Avoids
+// re-running convertMermaidToXml + finalizeStreamingView on subsequent
+// trailing-JSON partials. Reset by endStreaming() and on stream init.
+var mermaidEarlyFinalizeFired = false;
 
 /**
  * Standalone merge: inserts or updates cells from xmlNode into the graph
@@ -1586,40 +1708,192 @@ function findNewCellIds(model, prevIds)
 }
 
 /**
+ * Collect the set of cell IDs declared in an mxGraphModel XML node.
+ * Used after a Mermaid re-parse to find orphans: cells we previously
+ * inserted whose stable IDs (which hash on content) changed because
+ * the parser produced a different value for the same logical node —
+ * e.g. a Sankey total that grows as more flows are streamed in.
+ */
+function collectCellIdsFromXml(xmlNode)
+{
+  var ids = {};
+  if (xmlNode == null) return ids;
+
+  var rootEl = null;
+  if (xmlNode.nodeName === 'mxGraphModel')
+  {
+    var rs = xmlNode.getElementsByTagName('root');
+    if (rs.length > 0) rootEl = rs[0];
+  }
+  else if (xmlNode.nodeName === 'root')
+  {
+    rootEl = xmlNode;
+  }
+
+  if (rootEl == null) return ids;
+
+  var children = rootEl.childNodes;
+  for (var i = 0; i < children.length; i++)
+  {
+    var n = children[i];
+    if (n.nodeType !== 1) continue;
+    // UserObject / object wrappers carry the id externally; the inner
+    // mxCell only has the visual attributes.
+    var idAttr = n.getAttribute('id');
+    if (idAttr == null && (n.nodeName === 'UserObject' || n.nodeName === 'object'))
+    {
+      var inner = n.getElementsByTagName('mxCell');
+      if (inner.length > 0) idAttr = inner[0].getAttribute('id');
+    }
+    if (idAttr != null) ids[idAttr] = true;
+  }
+  return ids;
+}
+
+/**
+ * Remove cells from the model whose IDs are NOT in keepIds. Only
+ * meaningful for re-parse-style streaming (Mermaid) where every
+ * partial is the complete current state — so anything in the model
+ * but not in the new parse is stale.
+ *
+ * Returns the array of removed IDs so callers can clear animation
+ * tracking state for them.
+ */
+function removeOrphanCells(graph, keepIds)
+{
+  var model = graph.getModel();
+  var toRemove = [];
+
+  for (var id in model.cells)
+  {
+    if (id === '0' || id === '1') continue;
+    if (!keepIds[id]) toRemove.push(model.cells[id]);
+  }
+
+  if (toRemove.length === 0) return [];
+
+  var removedIds = [];
+  model.beginUpdate();
+  try
+  {
+    for (var i = 0; i < toRemove.length; i++)
+    {
+      removedIds.push(toRemove[i].id);
+      // model.remove also detaches edges/children.
+      model.remove(toRemove[i]);
+    }
+  }
+  finally
+  {
+    model.endUpdate();
+  }
+
+  // Clear animation tracking for removed cells so a future cell with
+  // the same ID (unlikely with content hashing, but defensive) animates
+  // afresh and isn't skipped because we marked it animated earlier.
+  for (var r = 0; r < removedIds.length; r++)
+  {
+    delete animatedCellIds[removedIds[r]];
+    var pi = pendingAnimCellIds.indexOf(removedIds[r]);
+    if (pi >= 0) pendingAnimCellIds.splice(pi, 1);
+    var di = deferredAnimCellIds.indexOf(removedIds[r]);
+    if (di >= 0) deferredAnimCellIds.splice(di, 1);
+  }
+
+  return removedIds;
+}
+
+/**
  * Animate newly added cells with wipe-in/pop-in animation.
  * Uses Graph's createPopAnimations and executeAnimations.
  */
 var pendingAnimCellIds = [];
 var animDebounceTimer = null;
+var animBatchStartT = 0;
 var deferredAnimCellIds = [];
 var deferredAnimTimer = null;
 var animatedCellIds = {};
 
+// Settle-debounce: wait this long after the most recent partial
+// before flushing. Short enough to feel responsive, long enough to
+// batch the cells inside a tight burst (mermaid often arrives in
+// a single burst of partials).
+var ANIM_SETTLE_MS = 60;
+// Max wait from the FIRST partial in a batch before we flush anyway.
+// Without this cap, a continuous partial stream would keep extending
+// the settle timer and animations would only fire once streaming
+// stops. With it, a long stream still produces incremental batches.
+var ANIM_MAX_WAIT_MS = 220;
+
 /**
- * Queue cell IDs for animation. Actual animation fires after a
- * 200ms pause in merging, so rapid consecutive merges get batched.
+ * Queue cell IDs for animation. Flush is debounced so rapid partials
+ * coalesce into one topologically-ordered batch, but capped at
+ * ANIM_MAX_WAIT_MS so a long stream still yields incremental flushes.
+ *
+ * Also synchronously sets opacity:0 on the cells' shape and text
+ * nodes so they don't briefly paint at their default position
+ * (often the SVG origin for edge labels, before edge routing places
+ * them) before flushCellAnimations runs the fade-in.
  */
 function queueCellAnimation(graph, cellIds)
 {
+  // Pre-hide synchronously to avoid the origin-flash for new cells
+  // (especially edge labels, which mxGraph initializes at (0, 0)
+  // before routing computes the midpoint).
+  if (cellIds.length > 0)
+  {
+    graph.view.validate();
+    for (var p = 0; p < cellIds.length; p++)
+    {
+      var pCell = graph.model.getCell(cellIds[p]);
+      if (pCell == null) continue;
+      var pState = graph.view.getState(pCell);
+      if (pState == null) continue;
+      if (pState.shape != null && pState.shape.node != null)
+      {
+        pState.shape.node.style.opacity = '0';
+      }
+      if (pState.text != null && pState.text.node != null)
+      {
+        pState.text.node.style.opacity = '0';
+      }
+    }
+  }
+
   for (var i = 0; i < cellIds.length; i++)
   {
     pendingAnimCellIds.push(cellIds[i]);
   }
 
-  if (animDebounceTimer != null)
-  {
-    clearTimeout(animDebounceTimer);
-  }
+  var now = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now();
+  if (animBatchStartT === 0) animBatchStartT = now;
+
+  // Cap the wait at ANIM_MAX_WAIT_MS from batch start. Within that
+  // ceiling, settle-debounce by ANIM_SETTLE_MS so a quiet partial gap
+  // still produces an early flush.
+  var elapsed = now - animBatchStartT;
+  var remaining = Math.max(0, ANIM_MAX_WAIT_MS - elapsed);
+  var delay = Math.min(ANIM_SETTLE_MS, remaining);
+
+  if (animDebounceTimer != null) clearTimeout(animDebounceTimer);
 
   animDebounceTimer = setTimeout(function()
   {
     animDebounceTimer = null;
+    animBatchStartT = 0;
     flushCellAnimations(graph);
-  }, 200);
+  }, delay);
 }
 
 /**
  * Run pop/fade animations on all batched cells.
+ *
+ * Animations are scheduled in BFS topological order across the batch:
+ * vertices with no in-batch incoming edges animate first (level 0),
+ * their outgoing edges pen-draw a beat later, target vertices pop on
+ * the next level, and so on. The result reads like a flow diagram
+ * being authored from upstream to downstream.
  */
 function flushCellAnimations(graph)
 {
@@ -1628,7 +1902,6 @@ function flushCellAnimations(graph)
   var ids = pendingAnimCellIds;
   pendingAnimCellIds = [];
 
-  // Validate view to ensure all cell states have proper bounds
   graph.view.validate();
 
   var readyCells = [];
@@ -1658,7 +1931,6 @@ function flushCellAnimations(graph)
     else readyVertices.push(cell);
   }
 
-  // Re-queue deferred cells — they'll get animated once geometry arrives
   if (deferred.length > 0)
   {
     for (var d = 0; d < deferred.length; d++)
@@ -1669,125 +1941,438 @@ function flushCellAnimations(graph)
 
   if (readyCells.length === 0) return;
 
-  // Mark as animated
   for (var a = 0; a < readyCells.length; a++)
   {
     animatedCellIds[readyCells[a].id] = true;
   }
 
-  // Collect all shape+text nodes for hiding
-  var allNodes = [];
+  var schedule = computeAnimSchedule(readyVertices, readyEdges);
 
-  for (var j = 0; j < readyCells.length; j++)
+  // Vertices: pop-scale + fade keyed by topological level.
+  for (var v = 0; v < readyVertices.length; v++)
   {
-    var state = graph.view.getState(readyCells[j]);
+    var vCell = readyVertices[v];
+    var vs = graph.view.getState(vCell);
+    if (vs == null) continue;
+    var delaySec = (schedule.vertexDelay[vCell.id] || 0) / 1000;
 
-    if (state != null && state.shape != null && state.shape.node != null)
+    if (vs.shape != null && vs.shape.node != null)
     {
-      allNodes.push(state.shape.node);
+      popInVertexNode(vs.shape.node, vs, delaySec);
     }
-
-    if (state != null && state.text != null && state.text.node != null)
+    if (vs.text != null && vs.text.node != null)
     {
-      allNodes.push(state.text.node);
+      fadeInWithDelay(vs.text.node, delaySec);
     }
   }
 
-  if (allNodes.length === 0) return;
-
-  // Fade in all new cells via CSS transition
-  for (var k = 0; k < allNodes.length; k++)
+  // Edges: pen-draw a beat after their source vertex; labels follow.
+  for (var ec = 0; ec < readyEdges.length; ec++)
   {
-    allNodes[k].style.opacity = '0';
-    allNodes[k].style.visibility = 'visible';
-    allNodes[k].style.transition = 'opacity 0.4s ease-out';
+    var eCell = readyEdges[ec];
+    var es = graph.view.getState(eCell);
+    if (es == null) continue;
+    var eDelaySec = (schedule.edgeDelay[eCell.id] || 0) / 1000;
+
+    if (es.shape != null && es.shape.node != null)
+    {
+      drawInEdgeNode(es.shape.node, eDelaySec);
+    }
+    if (es.text != null && es.text.node != null)
+    {
+      fadeInWithDelay(es.text.node, eDelaySec + 0.4);
+    }
+  }
+}
+
+// --- Topological animation scheduling ---
+
+// Time between successive levels (vertex-edge-vertex-edge-...).
+var ANIM_LEVEL_STEP_MS = 120;
+// Edge starts this much after its source vertex begins popping.
+var ANIM_EDGE_OFFSET_MS = 60;
+// Cap on level so a long linear flowchart doesn't take forever.
+var ANIM_MAX_LEVEL = 6;
+
+/**
+ * Build per-cell animation delays via Kahn's topological sort across
+ * the in-batch vertex/edge subgraph. Cells outside the batch are
+ * ignored; cycle members default to level 0.
+ */
+function computeAnimSchedule(readyVertices, readyEdges)
+{
+  var inDeg = {};
+  var outAdj = {};
+  var inBatch = {};
+
+  for (var v = 0; v < readyVertices.length; v++)
+  {
+    var id = readyVertices[v].id;
+    inDeg[id] = 0;
+    outAdj[id] = [];
+    inBatch[id] = true;
   }
 
-  // Trigger fade-in on next frame so the opacity:0 is painted first
+  for (var e = 0; e < readyEdges.length; e++)
+  {
+    var edge = readyEdges[e];
+    var s = edge.source != null ? edge.source.id : null;
+    var t = edge.target != null ? edge.target.id : null;
+    if (s != null && t != null && inBatch[s] && inBatch[t])
+    {
+      outAdj[s].push(t);
+      inDeg[t]++;
+    }
+  }
+
+  var level = {};
+  var queue = [];
+
+  for (var rId in inDeg)
+  {
+    if (inDeg[rId] === 0)
+    {
+      level[rId] = 0;
+      queue.push(rId);
+    }
+  }
+
+  // Pure cycle in batch: seed any vertex as a root so BFS still runs.
+  if (queue.length === 0)
+  {
+    for (var seedId in inDeg)
+    {
+      level[seedId] = 0;
+      queue.push(seedId);
+      break;
+    }
+  }
+
+  while (queue.length > 0)
+  {
+    var u = queue.shift();
+    var nbrs = outAdj[u];
+    for (var n = 0; n < nbrs.length; n++)
+    {
+      var tId = nbrs[n];
+      var newL = Math.min(level[u] + 1, ANIM_MAX_LEVEL);
+      if (level[tId] == null || level[tId] < newL)
+      {
+        level[tId] = newL;
+      }
+      inDeg[tId]--;
+      if (inDeg[tId] === 0)
+      {
+        queue.push(tId);
+      }
+    }
+  }
+
+  for (var leftId in outAdj)
+  {
+    if (level[leftId] == null) level[leftId] = 0;
+  }
+
+  var vertexDelay = {};
+  for (var vid in level) vertexDelay[vid] = level[vid] * ANIM_LEVEL_STEP_MS;
+
+  var edgeDelay = {};
+  for (var e2 = 0; e2 < readyEdges.length; e2++)
+  {
+    var edge2 = readyEdges[e2];
+    var s2 = edge2.source != null ? edge2.source.id : null;
+    var sLevel = (s2 != null && level[s2] != null) ? level[s2] : 0;
+    edgeDelay[edge2.id] = sLevel * ANIM_LEVEL_STEP_MS + ANIM_EDGE_OFFSET_MS;
+  }
+
+  return { vertexDelay: vertexDelay, edgeDelay: edgeDelay };
+}
+
+/**
+ * Pop-in animation for a vertex: opacity 0→1 with a subtle scale
+ * 0.95→1.0 around the cell's center. The CSS transform composes with
+ * mxGraph's SVG transform attribute via transform-box: fill-box, so
+ * the cell stays where mxGraph placed it.
+ */
+function popInVertexNode(node, state, delaySec)
+{
+  node.style.opacity = '0';
+  node.style.visibility = 'visible';
+  node.style.transformBox = 'fill-box';
+  node.style.transformOrigin = 'center';
+  node.style.transform = 'scale(0.95)';
+  node.style.transition =
+    'opacity 0.4s ease-out ' + delaySec + 's, ' +
+    'transform 0.4s cubic-bezier(0.34, 1.56, 0.64, 1) ' + delaySec + 's';
+
   requestAnimationFrame(function()
   {
-    for (var m = 0; m < allNodes.length; m++)
-    {
-      allNodes[m].style.opacity = '1';
-    }
-
-    // Clean up transitions after fade completes
-    setTimeout(function()
-    {
-      for (var p = 0; p < allNodes.length; p++)
-      {
-        allNodes[p].style.transition = '';
-      }
-    }, 450);
+    node.style.opacity = '1';
+    node.style.transform = 'scale(1)';
   });
+
+  setTimeout(function()
+  {
+    node.style.transition = '';
+    node.style.transform = '';
+    node.style.transformBox = '';
+    node.style.transformOrigin = '';
+  }, 450 + delaySec * 1000);
 }
 
-// --- Smart streaming camera ---
-//
-// Goal: keep the streaming preview inside a fixed visible viewport while
-// new cells stream in. The camera target is recomputed on each partial
-// (smart focus toward recently-added cells when they're a small subset)
-// and a critically-damped spring animates toward it on every rAF tick,
-// so the motion ease-outs naturally even between partials.
-
-// Maximum height for the streaming container. Caps growth so the iframe
-// stays in the user's chat viewport while the diagram fills in. Final
-// GraphViewer (post-stream) renders at natural size — see endStreaming.
-var STREAM_VIEWPORT_HEIGHT = 650;
-// Minimum height — avoids a tiny initial frame for trivial diagrams.
-var STREAM_VIEWPORT_MIN_HEIGHT = 320;
-// Padding around the focus rect, in container pixels.
-var STREAM_VIEWPORT_PADDING = 24;
-// How long a cell counts as "recently added" for focus weighting.
-// Long enough to keep the centroid stable when a single new arrival
-// would otherwise shift it dramatically — averaging across more
-// vertices smooths the panning.
-var STREAM_RECENT_CELL_TTL_MS = 1200;
-// Cap on the number of vertices considered "recent". Bigger set =
-// smoother centroid (less jitter when a vertex is added or expires)
-// but slightly wider focus rect.
-var STREAM_RECENT_VERTEX_LIMIT = 6;
-// How much extra zoom-in we'll allow when focusing on a small recent set,
-// expressed as a multiplier on the fit-whole scale. 1.0 = no extra zoom.
-var STREAM_RECENT_ZOOM_BOOST = 1.8;
-
-// Insertion-order queue of recent vertex additions: [{id, t}, ...].
-// We trim by both TTL and length cap so the camera only ever focuses on
-// the actual leading edge of new content. Cleared on endStreaming.
-var recentVertexQueue = [];
-
-function trackRecentCells(ids)
+/**
+ * Pen-draw an edge by animating SVG stroke-dashoffset from the path's
+ * total length to 0. Applies to every <path> descendant of the edge's
+ * shape node, so arrowheads pen-draw together with the body. delaySec
+ * staggers the start so edges from a topologically-earlier vertex
+ * draw before those from later ones.
+ */
+function drawInEdgeNode(edgeNode, delaySec)
 {
-  if (ids == null || ids.length === 0) return;
-  var now = (typeof performance !== 'undefined' && performance.now)
-    ? performance.now() : Date.now();
+  if (edgeNode == null) return;
+  delaySec = delaySec || 0;
 
-  for (var i = 0; i < ids.length; i++)
-  {
-    recentVertexQueue.push({ id: ids[i], t: now });
-  }
+  // streamMergeXmlDelta's pre-hide pass sets opacity:0 on every shape
+  // node whose ID is in pendingAnimCellIds — including edges. The
+  // pen-draw path doesn't otherwise touch group opacity, so the edge
+  // group would stay invisible while stroke-dashoffset transitions
+  // underneath. Force opacity back to 1 here.
+  edgeNode.style.opacity = '1';
+  edgeNode.style.visibility = 'visible';
 
-  // Cap length: keep only the last N additions.
-  if (recentVertexQueue.length > STREAM_RECENT_VERTEX_LIMIT)
+  var paths = edgeNode.querySelectorAll('path');
+  for (var i = 0; i < paths.length; i++)
   {
-    recentVertexQueue = recentVertexQueue.slice(-STREAM_RECENT_VERTEX_LIMIT);
+    drawInPath(paths[i], delaySec);
   }
 }
 
-// Camera animator state. The spring runs in log-space for scale (so
-// 0.5→1.0 feels like 1.0→2.0) and linear for tx/ty.
-var cameraTarget = null;     // { scale, tx, ty }
-var cameraVelocity = { logScale: 0, tx: 0, ty: 0 };
-var cameraAnimRaf = null;
-var cameraAnimLastT = 0;
-var cameraAnimGraph = null;
-// Slightly overdamped spring: zeta > 1 guarantees no overshoot, even
-// when the target keeps shrinking during streaming and the spring has
-// accumulated zoom-out velocity (which would otherwise carry it past
-// the final scale before settling back). Omega bumped a touch to keep
-// the response feeling snappy despite the extra damping.
-var CAMERA_SPRING_OMEGA = 10.0;
-var CAMERA_SPRING_ZETA = 1.25;
+function drawInPath(path, delaySec)
+{
+  delaySec = delaySec || 0;
+
+  var len = 0;
+  try { len = path.getTotalLength(); } catch (e) {}
+
+  if (!isFinite(len) || len <= 0)
+  {
+    // No measurable length (e.g. zero-length filler segment) — fade.
+    fadeInWithDelay(path, delaySec);
+    return;
+  }
+
+  // Clear any in-flight pen-draw state on this path before we start.
+  // If a prior drawInPath is still mid-animation when we get here
+  // (streaming pen-draw still running while postLayout's pen-draw
+  // kicks off), capturing path.style as "previous" would lock in
+  // dasharray = "len len" — i.e. the path stays invisible forever
+  // after both cleanups fire. Clearing first guarantees we're working
+  // from a clean slate.
+  path.style.transition = '';
+  path.style.strokeDasharray = '';
+  path.style.strokeDashoffset = '';
+
+  path.style.strokeDasharray  = String(len);
+  path.style.strokeDashoffset = String(len);
+  // Force reflow so the start state is captured before we transition.
+  path.getBoundingClientRect();
+  path.style.transition = 'stroke-dashoffset 0.5s ease-out ' + delaySec + 's';
+
+  requestAnimationFrame(function()
+  {
+    path.style.strokeDashoffset = '0';
+  });
+
+  // Always reset to '' on cleanup. Original dashing for styles like
+  // dashed=1 comes from SVG attributes, not inline CSS — clearing the
+  // inline values lets the underlying attribute take over again.
+  setTimeout(function()
+  {
+    path.style.transition = '';
+    path.style.strokeDasharray = '';
+    path.style.strokeDashoffset = '';
+  }, 600 + delaySec * 1000);
+}
+
+function fadeInWithDelay(node, delaySec)
+{
+  node.style.opacity = '0';
+  node.style.visibility = 'visible';
+  node.style.transition = 'opacity 0.3s ease-out ' + delaySec + 's';
+
+  requestAnimationFrame(function()
+  {
+    node.style.opacity = '1';
+  });
+
+  setTimeout(function()
+  {
+    node.style.transition = '';
+  }, 350 + delaySec * 1000);
+}
+
+/**
+ * Hide every edge (and its label) by setting opacity:0 on its SVG
+ * shape and text nodes. Used right before a layout-change mxMorphing:
+ * vertices animate cleanly to their new positions without dragging
+ * around stale waypoints. Pen-draw later fades them back in.
+ */
+function hideAllEdgesForMorph(graph)
+{
+  if (graph == null) return;
+  graph.view.validate();
+  var model = graph.getModel();
+  for (var id in model.cells)
+  {
+    var cell = model.cells[id];
+    if (cell == null || !cell.edge) continue;
+    var state = graph.view.getState(cell);
+    if (state == null) continue;
+    if (state.shape != null && state.shape.node != null)
+    {
+      state.shape.node.style.opacity = '0';
+    }
+    if (state.text != null && state.text.node != null)
+    {
+      state.text.node.style.opacity = '0';
+    }
+  }
+}
+
+/**
+ * Pen-draw every edge using the streaming schedule (BFS levels via
+ * computeAnimSchedule). Called after a layout-change mxMorphing
+ * completes, so edges fade in along the topological order rather than
+ * snapping in all at once.
+ */
+function penDrawAllEdgesAfterMorph(graph)
+{
+  if (graph == null) return;
+  graph.view.validate();
+  var model = graph.getModel();
+  var edges = [];
+  var vertices = [];
+  for (var id in model.cells)
+  {
+    if (id === '0' || id === '1') continue;
+    var cell = model.cells[id];
+    if (cell == null) continue;
+    if (cell.edge) edges.push(cell);
+    else if (cell.vertex) vertices.push(cell);
+  }
+  if (edges.length === 0) return;
+  var schedule = computeAnimSchedule(vertices, edges);
+  for (var i = 0; i < edges.length; i++)
+  {
+    var eCell = edges[i];
+    var es = graph.view.getState(eCell);
+    if (es == null) continue;
+    var eDelaySec = (schedule.edgeDelay[eCell.id] || 0) / 1000;
+    if (es.shape != null && es.shape.node != null)
+    {
+      drawInEdgeNode(es.shape.node, eDelaySec);
+    }
+    if (es.text != null && es.text.node != null)
+    {
+      fadeInWithDelay(es.text.node, eDelaySec + 0.4);
+    }
+  }
+}
+
+// --- Streaming camera ---
+//
+// CSS-transform based soft-follow. mxGraph's view stays at scale=1,
+// translate=(0,0) so cell DOM positions don't churn during animation.
+// The visible camera lives in viewTransform and is applied as
+// "transform: scale(s) translate(tx, ty)" on the SVG element, with
+// a CSS transition handling the easing — no rAF loop, no spring math.
+//
+// During streaming we soft-follow the leading edge: each partial,
+// recentVertexQueue holds the cells added in roughly the last
+// STREAM_RECENT_TTL_MS, plus a length cap. The camera fits the bbox
+// of those cells inflated by a generous context padding so the user
+// sees the new content with breathing room rather than a tight zoom.
+// We never zoom IN beyond fit-whole — the fit-whole scale is a hard
+// upper bound, so as the diagram grows the camera only zooms out.
+//
+// At finalize / Fit / postLayout, we clear recentVertexQueue; the
+// focus bbox falls back to the whole diagram and the same code path
+// produces a fit-whole target. The CSS transition eases the camera
+// from the leading-edge view to the whole view in one smooth pull-back.
+
+// Minimum height — keeps trivial diagrams from collapsing to a sliver
+// while staying compact enough that the user doesn't see a big empty
+// frame for one or two cells.
+var STREAM_VIEWPORT_MIN_HEIGHT = 200;
+// Hard cap on the iframe height in inline mode. The host grows the
+// iframe in response to sendSizeChanged but doesn't honor shrinks,
+// so we have to start conservative — anything taller than this would
+// push the chat prompt off-screen on typical laptop viewports.
+// Must match the CSS max-height on #diagram-container.streaming so the
+// JS fit math agrees with the rendered height.
+var STREAM_VIEWPORT_MAX_HEIGHT_INLINE = 480;
+// Padding around the focus bbox at fit-whole, in container pixels.
+var STREAM_VIEWPORT_PADDING = 24;
+// Minimum scale clamp — large diagrams need to zoom out enough that
+// the whole bbox fits inside the container.
+var STREAM_MIN_SCALE = 0.05;
+// How long a cell counts as "recently added" for soft-follow.
+// Cells outside this window fall out of the focus bbox and become
+// passive context, so the camera stops following them.
+var STREAM_RECENT_TTL_MS = 2000;
+// Hard cap on queue length. Kept small so the focus bbox tracks just
+// the latest few cells — if it includes most of the diagram, the
+// inflated rect clips back to wholeBBox and there's no soft-follow.
+var STREAM_RECENT_LIMIT = 4;
+// Context padding around the recent-cells bbox, expressed as a
+// fraction of the larger of (bbox width, bbox height). 0.4 keeps the
+// recent cells filling most of the camera with a comfortable margin —
+// large enough that the next cell usually still appears inside the
+// view, small enough that there's a visible pull-back at finalize.
+var STREAM_FOCUS_CONTEXT_FACTOR = 0.4;
+// CSS transition timing for camera moves during streaming. Drag
+// disables the transition for direct response. The cubic-bezier is
+// a gentle ease-in-out — small acceleration off the previous target,
+// smooth landing on the new one. No overshoot.
+// Duration scales with the magnitude of the camera change. Bumped
+// the floor up so rapid retargeting (LLM streaming partials every
+// ~100 ms) blends through CSS interpolation instead of jumping
+// between targets — every new transition has enough runway to look
+// continuous instead of stuttery.
+var STREAM_TRANSITION_MIN_MS = 520;
+var STREAM_TRANSITION_MAX_MS = 1100;
+var STREAM_TRANSITION_EASING = 'cubic-bezier(0.4, 0, 0.6, 1)';
+// Per-extra-cell zoom-out coefficient. lastBatchSize=1 produces
+// no pull-back; larger batches multiply targetScale down so the
+// camera "moves out more" — Mermaid arrives in a single big
+// partial, so without this the focus rect saturates to wholeBBox
+// and there's no visible pull-back.
+var STREAM_BATCH_PULLBACK_K = 0.06;
+var STREAM_BATCH_PULLBACK_MIN = 0.45;
+// Cap on close-up zoom while soft-following recent cells. Allowing
+// up to 1:1 lets the camera focus on a small recent area when the
+// diagram is bigger than the viewport. We never zoom IN past 1:1 —
+// that would inflate text past native size and look broken.
+var STREAM_FOLLOW_MAX_SCALE = 1.0;
+// Extra space reserved at the bottom of the container so the diagram
+// never visually touches the toolbar / card edge.
+var STREAM_BOTTOM_GUTTER = 16;
+
+// Insertion-ordered queue of recent vertex additions: [{id, t}, ...].
+// Cleared by endStreaming and by customFitView / finalize so the
+// focus bbox falls back to the whole diagram.
+var recentVertexQueue = [];
+// Size of the most recent partial's batch. Drives the batch
+// pull-back multiplier so big Mermaid partials zoom out further
+// than incremental XML appends.
+var lastBatchSize = 0;
+
+// Visible camera transform applied via CSS transform on the SVG. The
+// math matches mxGraph's scaleAndTranslate: a model point (Mx, My)
+// maps to screen (s*(Mx + tx), s*(My + ty)) when transform-origin
+// is at the SVG's top-left.
+var viewTransform = { scale: 1, tx: 0, ty: 0 };
+var viewTransformSvg = null;
 
 /**
  * Compute the bbox of cells (in model-space, with parent offsets) from
@@ -1850,330 +2435,377 @@ function computeWholeBBox(model)
 }
 
 /**
- * Given a target rect in model space (inflated with padding) and the
- * container size in pixels, return { scale, tx, ty } that fits it
- * centered, with scale clamped to [0.1, 1.0].
+ * Record vertex IDs as recently added so the soft-follow camera
+ * focuses on them. Edges are excluded by the caller (a long edge
+ * can span the whole diagram and would defeat the close-up).
  */
-function fitRectToContainer(rect, cw, ch)
+function trackRecentCells(ids)
 {
-  var rw = Math.max(rect.maxX - rect.minX, 1);
-  var rh = Math.max(rect.maxY - rect.minY, 1);
-  var availW = Math.max(cw - STREAM_VIEWPORT_PADDING * 2, 1);
-  var availH = Math.max(ch - STREAM_VIEWPORT_PADDING * 2, 1);
+  if (ids == null || ids.length === 0) return;
+  var now = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now();
 
-  var scale = Math.min(availW / rw, availH / rh, 1);
-  scale = Math.max(scale, 0.1);
+  for (var i = 0; i < ids.length; i++)
+  {
+    recentVertexQueue.push({ id: ids[i], t: now });
+  }
 
-  var cx = (rect.minX + rect.maxX) / 2;
-  var cy = (rect.minY + rect.maxY) / 2;
-  var tx = (cw / scale) / 2 - cx;
-  var ty = (ch / scale) / 2 - cy;
+  if (recentVertexQueue.length > STREAM_RECENT_LIMIT)
+  {
+    recentVertexQueue = recentVertexQueue.slice(-STREAM_RECENT_LIMIT);
+  }
 
-  return { scale: scale, tx: tx, ty: ty };
+  lastBatchSize = ids.length;
+
+  try { console.log('[drawio][track] +' + ids.length + ' queue=' + recentVertexQueue.length + ' ids=' + ids.join(',')); } catch (_) {}
 }
 
 /**
- * Decide where the camera should be aiming right now. Strategy:
- *
- *  - Always size the streaming container at STREAM_VIEWPORT_HEIGHT (or
- *    less when the diagram naturally fits smaller). Width is fixed by
- *    layout.
- *  - "Whole" target = fit-bbox of all cells, padded.
- *  - "Hot" target = fit-bbox of cells added in the last
- *    STREAM_RECENT_CELL_TTL_MS, expanded slightly so we keep some
- *    spatial context around them.
- *  - When recent cells span most of the diagram (recent_area / whole_area
- *    > 0.6), the hot view collapses into the whole view; the bias has no
- *    effect.
- *  - Otherwise blend toward the hot view: lerp center and (clamped)
- *    scale. The blend factor decays with the recent/whole area ratio so
- *    a single new node gets full focus and a flurry of new nodes barely
- *    nudges the camera.
+ * Drop expired entries from recentVertexQueue and return the
+ * surviving IDs. Mutating prune so the queue doesn't grow unbounded
+ * when the LLM streams continuously.
  */
-function computeStreamCameraTarget(graph)
+function getRecentVertexIds()
 {
-  var model = graph.getModel();
-  var wholeBox = computeWholeBBox(model);
-
-  if (wholeBox == null) return null;
-
-  // Choose container height: cap at STREAM_VIEWPORT_HEIGHT, but shrink
-  // for tiny diagrams that fit smaller without zooming below 100%.
-  var cw = containerEl.clientWidth;
-  if (cw <= 0) return null;
-
-  var wholeW = Math.max(wholeBox.maxX - wholeBox.minX, 1);
-  var wholeH = Math.max(wholeBox.maxY - wholeBox.minY, 1);
-
-  // Height that would let the whole diagram fit at its width-fit scale,
-  // capped at STREAM_VIEWPORT_HEIGHT and floored at the minimum.
-  var widthFitScale = Math.min((cw - STREAM_VIEWPORT_PADDING * 2) / wholeW, 1);
-  var naturalH = Math.ceil(wholeH * widthFitScale + STREAM_VIEWPORT_PADDING * 2);
-  var desiredH = Math.max(STREAM_VIEWPORT_MIN_HEIGHT,
-                          Math.min(naturalH, STREAM_VIEWPORT_HEIGHT));
-
-  if (Math.abs(containerEl.clientHeight - desiredH) > 1)
-  {
-    containerEl.style.height = desiredH + 'px';
-
-    if (app.sendSizeChanged)
-    {
-      app.sendSizeChanged({ width: cw, height: desiredH });
-    }
-  }
-
-  var ch = desiredH;
-
-  // Whole-fit camera target.
-  var paddedWhole = {
-    minX: wholeBox.minX, minY: wholeBox.minY,
-    maxX: wholeBox.maxX, maxY: wholeBox.maxY
-  };
-  var wholeView = fitRectToContainer(paddedWhole, cw, ch);
-
-  // Collect recent vertex IDs (within TTL). Iterate the queue in
-  // insertion order; expire stale entries by trimming from the front.
+  if (recentVertexQueue.length === 0) return [];
   var now = (typeof performance !== 'undefined' && performance.now)
     ? performance.now() : Date.now();
   var firstAlive = 0;
 
   while (firstAlive < recentVertexQueue.length &&
-         now - recentVertexQueue[firstAlive].t > STREAM_RECENT_CELL_TTL_MS)
+         now - recentVertexQueue[firstAlive].t > STREAM_RECENT_TTL_MS)
   {
     firstAlive++;
   }
 
   if (firstAlive > 0) recentVertexQueue = recentVertexQueue.slice(firstAlive);
 
-  var recentIds = [];
-  for (var rq = 0; rq < recentVertexQueue.length; rq++)
+  var ids = [];
+  for (var i = 0; i < recentVertexQueue.length; i++)
   {
-    recentIds.push(recentVertexQueue[rq].id);
+    ids.push(recentVertexQueue[i].id);
   }
+  return ids;
+}
 
-  if (recentIds.length === 0) return wholeView;
+/**
+ * Pick a transition duration that scales with the magnitude of the
+ * camera change. Tiny nudges stay snappy (~MIN_MS); big finalize-style
+ * settles get a longer, graceful transition (~MAX_MS) — long enough
+ * for the SVG to keep up with rendering during streaming.
+ */
+function computeTransitionDuration(curS, curTx, curTy, tgtS, tgtTx, tgtTy, viewportSpan)
+{
+  var dS = Math.abs(curS - tgtS) / Math.max(curS, tgtS, 0.001);
+  var span = Math.max(viewportSpan || 1, 1);
+  // Translation magnitude in screen pixels (approx).
+  var s = Math.max(curS, tgtS);
+  var dPx = (Math.abs(curTx - tgtTx) + Math.abs(curTy - tgtTy)) * s;
+  // Normalize: scale change of 50% or translate of viewport-span both
+  // count as "big" change (factor ~ 1).
+  var factor = Math.min(1, Math.max(dS * 2, dPx / span));
+  var dur = STREAM_TRANSITION_MIN_MS +
+            (STREAM_TRANSITION_MAX_MS - STREAM_TRANSITION_MIN_MS) * factor;
+  return Math.round(dur);
+}
 
-  var recentBox = computeCellsBBox(model, recentIds);
-  if (recentBox == null) return wholeView;
+/**
+ * Clamp a pan target (tx, ty at the given scale) so the diagram bbox
+ * always keeps at least PAN_KEEP_MARGIN px visible on every container
+ * edge. Without this, drag-with-pointer-capture lets the user panning
+ * mouse outside the window pull the SVG completely off-screen with no
+ * way to recover (the pointermove keeps firing with extreme coords).
+ *
+ * Pure-pan (drag) calls this; the streaming/finalize/Fit camera math
+ * already produces in-bounds targets, so they don't need it.
+ */
+var PAN_KEEP_MARGIN = 80;
 
-  // Inflate the recent bbox to keep some spatial context visible.
-  var inflate = Math.max(wholeW, wholeH) * 0.15;
-  var paddedRecent = {
-    minX: recentBox.minX - inflate, minY: recentBox.minY - inflate,
-    maxX: recentBox.maxX + inflate, maxY: recentBox.maxY + inflate
-  };
+function clampPan(scale, tx, ty)
+{
+  if (streamGraph == null) return { tx: tx, ty: ty };
+  var bbox = computeWholeBBox(streamGraph.getModel());
+  if (bbox == null) return { tx: tx, ty: ty };
+  var cw = containerEl.clientWidth;
+  var ch = containerEl.clientHeight;
+  if (cw <= 0 || ch <= 0) return { tx: tx, ty: ty };
 
-  // Don't focus tighter than the whole bbox itself — clip to it so we
-  // never pan outside the diagram.
-  paddedRecent.minX = Math.max(paddedRecent.minX, wholeBox.minX);
-  paddedRecent.minY = Math.max(paddedRecent.minY, wholeBox.minY);
-  paddedRecent.maxX = Math.min(paddedRecent.maxX, wholeBox.maxX);
-  paddedRecent.maxY = Math.min(paddedRecent.maxY, wholeBox.maxY);
+  // Constraint: visible bbox in container = [scale*(minX+tx), scale*(maxX+tx)]
+  // must overlap [0, cw] by at least PAN_KEEP_MARGIN px.
+  var minTx = PAN_KEEP_MARGIN / scale - bbox.maxX;
+  var maxTx = (cw - PAN_KEEP_MARGIN) / scale - bbox.minX;
+  var minTy = PAN_KEEP_MARGIN / scale - bbox.maxY;
+  var maxTy = (ch - PAN_KEEP_MARGIN) / scale - bbox.minY;
 
-  var recentView = fitRectToContainer(paddedRecent, cw, ch);
-
-  // Blend factor: focus on recent when it's a small portion of the
-  // diagram, fade to whole-fit as it grows. Capped at 0.75 so the
-  // camera always keeps a fair amount of context visible (less twitchy
-  // than a full 0.9 lock onto the hot region).
-  var wholeArea = wholeW * wholeH;
-  var recentArea = Math.max(recentBox.maxX - recentBox.minX, 1) *
-                   Math.max(recentBox.maxY - recentBox.minY, 1);
-  var ratio = Math.min(recentArea / Math.max(wholeArea, 1), 1);
-  var blend = Math.max(0, 0.75 * (1 - ratio / 0.75));   // 0..0.75
-
-  // Cap the focus zoom so we don't lose context — never more than
-  // STREAM_RECENT_ZOOM_BOOST × the whole-fit scale.
-  var maxScale = Math.min(wholeView.scale * STREAM_RECENT_ZOOM_BOOST, 1);
-  var blendedScale = wholeView.scale +
-                     (Math.min(recentView.scale, maxScale) - wholeView.scale) * blend;
-
-  // Lerp center; convert (tx, ty) back from blended scale.
-  var wholeCx = (wholeBox.minX + wholeBox.maxX) / 2;
-  var wholeCy = (wholeBox.minY + wholeBox.maxY) / 2;
-  var recentCx = (recentBox.minX + recentBox.maxX) / 2;
-  var recentCy = (recentBox.minY + recentBox.maxY) / 2;
-  var cx = wholeCx + (recentCx - wholeCx) * blend;
-  var cy = wholeCy + (recentCy - wholeCy) * blend;
+  // Defensive when range collapses (margin > visible width/height).
+  if (minTx > maxTx) { var midX = (minTx + maxTx) / 2; minTx = midX; maxTx = midX; }
+  if (minTy > maxTy) { var midY = (minTy + maxTy) / 2; minTy = midY; maxTy = midY; }
 
   return {
-    scale: blendedScale,
-    tx: (cw / blendedScale) / 2 - cx,
-    ty: (ch / blendedScale) / 2 - cy
+    tx: Math.max(minTx, Math.min(maxTx, tx)),
+    ty: Math.max(minTy, Math.min(maxTy, ty))
   };
 }
 
 /**
- * rAF tick: advance critically-damped spring on (logScale, tx, ty)
- * toward cameraTarget and apply to the graph view. Reschedules itself
- * until the camera is at rest (within thresholds).
- */
-function cameraAnimTick(now)
-{
-  cameraAnimRaf = null;
-
-  if (cameraAnimGraph == null || cameraTarget == null) return;
-
-  var dt = (cameraAnimLastT > 0) ? Math.min((now - cameraAnimLastT) / 1000, 0.05) : 0.016;
-  cameraAnimLastT = now;
-
-  var view = cameraAnimGraph.view;
-  var curScale = view.scale;
-  var curTx = view.translate.x;
-  var curTy = view.translate.y;
-
-  var curLog = Math.log(Math.max(curScale, 0.0001));
-  var tgtLog = Math.log(Math.max(cameraTarget.scale, 0.0001));
-
-  // Damped spring: a = omega^2 * (target-pos) - 2*zeta*omega*vel
-  // Slightly overdamped (zeta > 1) so a chasing target with built-up
-  // velocity can never overshoot when the target finally settles.
-  var omega = CAMERA_SPRING_OMEGA;
-  var omega2 = omega * omega;
-  var damp = 2 * CAMERA_SPRING_ZETA * omega;
-
-  cameraVelocity.logScale += (omega2 * (tgtLog - curLog) - damp * cameraVelocity.logScale) * dt;
-  cameraVelocity.tx       += (omega2 * (cameraTarget.tx - curTx) - damp * cameraVelocity.tx) * dt;
-  cameraVelocity.ty       += (omega2 * (cameraTarget.ty - curTy) - damp * cameraVelocity.ty) * dt;
-
-  var newLog = curLog + cameraVelocity.logScale * dt;
-  var newScale = Math.exp(newLog);
-  var newTx = curTx + cameraVelocity.tx * dt;
-  var newTy = curTy + cameraVelocity.ty * dt;
-
-  // Snap when within thresholds AND velocity is small.
-  var atScale = Math.abs(newScale - cameraTarget.scale) < 0.003 &&
-                Math.abs(cameraVelocity.logScale) < 0.05;
-  var atTx = Math.abs(newTx - cameraTarget.tx) < 0.5 &&
-             Math.abs(cameraVelocity.tx) < 1;
-  var atTy = Math.abs(newTy - cameraTarget.ty) < 0.5 &&
-             Math.abs(cameraVelocity.ty) < 1;
-
-  if (atScale) { newScale = cameraTarget.scale; cameraVelocity.logScale = 0; }
-  if (atTx)    { newTx = cameraTarget.tx;       cameraVelocity.tx = 0; }
-  if (atTy)    { newTy = cameraTarget.ty;       cameraVelocity.ty = 0; }
-
-  // Skip the apply if nothing visibly changed (avoids redundant SVG
-  // matrix updates).
-  if (newScale !== curScale || newTx !== curTx || newTy !== curTy)
-  {
-    view.scaleAndTranslate(newScale, newTx, newTy);
-  }
-
-  // Keep ticking until at rest.
-  if (!(atScale && atTx && atTy))
-  {
-    cameraAnimRaf = requestAnimationFrame(cameraAnimTick);
-  }
-  else
-  {
-    cameraAnimLastT = 0;
-  }
-}
-
-function ensureCameraAnimRunning(graph)
-{
-  cameraAnimGraph = graph;
-
-  if (cameraAnimRaf == null)
-  {
-    cameraAnimLastT = 0;
-    cameraAnimRaf = requestAnimationFrame(cameraAnimTick);
-  }
-}
-
-function stopCameraAnim()
-{
-  if (cameraAnimRaf != null)
-  {
-    cancelAnimationFrame(cameraAnimRaf);
-    cameraAnimRaf = null;
-  }
-
-  cameraAnimGraph = null;
-  cameraTarget = null;
-  cameraVelocity.logScale = 0;
-  cameraVelocity.tx = 0;
-  cameraVelocity.ty = 0;
-  cameraAnimLastT = 0;
-}
-
-/**
- * Public entry point called after each merge. Recomputes the camera
- * target (smart focus toward recently-added cells) and ensures the
- * spring animator is running. The animator keeps ticking between
- * partials, so motion eases out smoothly even when the LLM pauses.
- */
-function streamFollowNewCells(graph)
-{
-  var target = computeStreamCameraTarget(graph);
-  if (target == null) return;
-
-  cameraTarget = target;
-
-  // First time: snap scale into a reasonable range so we don't start
-  // from the default scale=1, translate=0,0 and zip across the screen.
-  if (graph.view.scale === 1 && graph.view.translate.x === 0 &&
-      graph.view.translate.y === 0)
-  {
-    // Start at a slightly lower scale than the target for a subtle
-    // "zoom-in-as-it-renders" feel, capped at the target so we don't
-    // start zoomed in.
-    var startScale = Math.max(target.scale * 0.85, 0.1);
-    graph.view.scaleAndTranslate(startScale, target.tx, target.ty);
-  }
-
-  ensureCameraAnimRunning(graph);
-}
-
-/**
- * Smooth handoff from the streaming Graph to the final GraphViewer.
+ * Apply { scale, tx, ty } as a CSS transform on the streaming SVG.
+ * mxGraph's view stays at (1, 0, 0) — the cell DOM nodes only get
+ * laid out when the model changes, not when the camera moves, which
+ * is what kills the label flicker that view.scaleAndTranslate caused.
  *
- * - Clears the recent-vertex queue so the camera target snaps back to
- *   fit-whole — the spring then animates the streamGraph from "zoomed
- *   in on the leading edge" out to the full diagram in parallel with
- *   the fade-out, so the user sees the camera pull back as the stream
- *   dissolves into the viewer.
- * - Fades out the streamGraph (350 ms) while the GraphViewer renders
- *   underneath at fit-whole (matching scale, no jump on swap).
- * - Skips the viewer's intro pop animation since the stream already
- *   showed every cell appearing.
- *
- * renderFn is called after the fade completes; it must call
- * renderDiagram(xml, { skipIntroAnim: true, fadeIn: true }).
+ * The "immediate" arg skips the CSS transition (used by drag and
+ * explicit snap-fits). Otherwise the browser eases the transform
+ * change over a duration scaled by magnitude.
  */
-function transitionToFinalView(renderFn)
+function applyViewTransform(graph, scale, tx, ty, immediate, durationMs)
 {
-  if (streamGraph == null)
+  if (graph == null || graph.container == null)
   {
-    renderFn();
+    try { console.log('[drawio][apply-vt] abort: no graph/container'); } catch (_) {}
     return;
   }
 
-  // Pull camera back to fit-whole during the fade. The smart-camera
-  // target recomputes on each rAF tick of the spring, so emptying the
-  // recent queue immediately retargets to the whole diagram.
-  recentVertexQueue = [];
-
-  var streamDiv = containerEl.firstElementChild;
-
-  if (streamDiv != null)
+  var svg = viewTransformSvg;
+  var rebound = false;
+  if (svg == null || !svg.isConnected)
   {
-    streamDiv.style.transition = 'opacity 0.35s ease-out';
-    streamDiv.style.opacity = '0';
+    svg = graph.container.querySelector('svg');
+    viewTransformSvg = svg;
+    rebound = true;
+    if (svg != null) svg.style.transformOrigin = '0 0';
+  }
+  if (svg == null)
+  {
+    try { console.log('[drawio][apply-vt] abort: no svg in container'); } catch (_) {}
+    return;
   }
 
-  pendingToolInputTimer = setTimeout(function()
+  var dur = (durationMs != null) ? durationMs : STREAM_TRANSITION_MIN_MS;
+  svg.style.transition = immediate
+    ? 'none'
+    : 'transform ' + dur + 'ms ' + STREAM_TRANSITION_EASING;
+  svg.style.transform =
+    'scale(' + scale + ') ' +
+    'translate(' + tx + 'px, ' + ty + 'px)';
+
+  viewTransform.scale = scale;
+  viewTransform.tx = tx;
+  viewTransform.ty = ty;
+
+  try
   {
-    pendingToolInputTimer = null;
-    endStreaming();
-    renderFn();
-  }, 350);
+    console.log(
+      '[drawio][apply-vt]' +
+      (rebound ? ' (REBOUND svg)' : '') +
+      ' immediate=' + !!immediate +
+      ' transition="' + svg.style.transition + '"' +
+      ' transform="' + svg.style.transform + '"' +
+      ' svgDims=' + (svg.getAttribute('width') || '?') + 'x' + (svg.getAttribute('height') || '?')
+    );
+  }
+  catch (_) {}
 }
 
 /**
+ * Recompute container size + camera target for the current model and
+ * apply via CSS transform. The container height tracks the WHOLE
+ * diagram's natural-fit height (so the iframe grows as the diagram
+ * grows). The CAMERA tracks the bbox of recently-added vertices,
+ * inflated by a context margin, so the user sees the leading edge
+ * with breathing room. When recentVertexQueue is empty (cleared by
+ * finalize/Fit), the focus bbox falls back to the whole diagram.
+ *
+ * The "immediate" arg bypasses the CSS transition — used by Fit,
+ * drag, and the window-resize / displayMode handlers where a snap
+ * is the correct response.
+ */
+function streamFollowNewCells(graph, immediate, skipResize)
+{
+  if (graph == null) { try { console.log('[drawio][stream-cam] abort: no graph'); } catch (_) {} return; }
+
+  var model = graph.getModel();
+  var wholeBBox = computeWholeBBox(model);
+  if (wholeBBox == null) { try { console.log('[drawio][stream-cam] abort: no whole bbox'); } catch (_) {} return; }
+
+  var cw = containerEl.clientWidth;
+  if (cw <= 0) { try { console.log('[drawio][stream-cam] abort: cw=' + cw); } catch (_) {} return; }
+
+  var wholeW = Math.max(wholeBBox.maxX - wholeBBox.minX, 1);
+  var wholeH = Math.max(wholeBBox.maxY - wholeBBox.minY, 1);
+
+  // Container height: shrink-to-fit when the diagram naturally fits
+  // in less than the available viewport, otherwise cap at viewport
+  // and let the camera scale further down. Skipped when skipResize
+  // is true (Fit button: scale into the existing container).
+  var maxH = maxViewportHeight();
+  var availW0 = Math.max(cw - STREAM_VIEWPORT_PADDING * 2, 1);
+  var widthFitScale = Math.min(availW0 / wholeW, 1);
+  var naturalH = Math.ceil(wholeH * widthFitScale +
+                           STREAM_VIEWPORT_PADDING * 2 +
+                           STREAM_BOTTOM_GUTTER);
+  var desiredH;
+  if (currentDisplayMode === 'fullscreen')
+  {
+    desiredH = maxH;
+  }
+  else
+  {
+    desiredH = Math.max(STREAM_VIEWPORT_MIN_HEIGHT,
+                        Math.min(naturalH, maxH));
+  }
+
+  if (!skipResize && Math.abs(containerEl.clientHeight - desiredH) > 1)
+  {
+    containerEl.style.height = desiredH + 'px';
+    notifySize('container-resize');
+  }
+
+  // Use the ACTUAL container height for fit math — CSS constraints
+  // (max-height, viewport, etc.) can clamp our requested height,
+  // and using desiredH there would compute a fit that overshoots
+  // the visible area and crops the bottom.
+  var ch = containerEl.clientHeight || desiredH;
+
+  var availW = Math.max(cw - STREAM_VIEWPORT_PADDING * 2, 1);
+  // Reserve extra gutter below the diagram so it doesn't visually
+  // touch the toolbar / card border.
+  var availH = Math.max(ch - STREAM_VIEWPORT_PADDING * 2 -
+                        STREAM_BOTTOM_GUTTER, 1);
+  var fitWholeS = Math.min(availW / wholeW, availH / wholeH, 1);
+  fitWholeS = Math.max(fitWholeS, STREAM_MIN_SCALE);
+
+  // Pick the focus rect: recent vertices when present (with context
+  // padding), otherwise the whole diagram.
+  var recentIds = getRecentVertexIds();
+  var focusRect;
+
+  if (recentIds.length > 0)
+  {
+    var rb = computeCellsBBox(model, recentIds);
+    if (rb != null)
+    {
+      var rw = Math.max(rb.maxX - rb.minX, 1);
+      var rh = Math.max(rb.maxY - rb.minY, 1);
+      var ctx = Math.max(rw, rh) * STREAM_FOCUS_CONTEXT_FACTOR;
+      focusRect = {
+        minX: rb.minX - ctx,
+        minY: rb.minY - ctx,
+        maxX: rb.maxX + ctx,
+        maxY: rb.maxY + ctx
+      };
+      // Don't extend beyond the whole diagram — keeps the camera
+      // from showing dead space outside any actual content.
+      focusRect.minX = Math.max(focusRect.minX, wholeBBox.minX);
+      focusRect.minY = Math.max(focusRect.minY, wholeBBox.minY);
+      focusRect.maxX = Math.min(focusRect.maxX, wholeBBox.maxX);
+      focusRect.maxY = Math.min(focusRect.maxY, wholeBBox.maxY);
+    }
+    else
+    {
+      focusRect = wholeBBox;
+    }
+  }
+  else
+  {
+    focusRect = wholeBBox;
+  }
+
+  var fw = Math.max(focusRect.maxX - focusRect.minX, 1);
+  var fh = Math.max(focusRect.maxY - focusRect.minY, 1);
+
+  // When following recent cells, allow close-up zoom up to 1:1 so
+  // the camera actually focuses on small new content (instead of
+  // just panning at fit-whole scale). When falling back to whole
+  // (recentIds empty), still cap at fit-whole — the diagram should
+  // never be zoomed past what shows everything.
+  var followCap = (recentIds.length > 0)
+    ? STREAM_FOLLOW_MAX_SCALE
+    : fitWholeS;
+  var targetScale = Math.min(availW / fw, availH / fh, followCap);
+  targetScale = Math.max(targetScale, STREAM_MIN_SCALE);
+
+  // Batch pull-back: bigger partials zoom out further. Without
+  // this, Mermaid (which arrives in one ~16-cell partial) ends up
+  // with focusRect ≈ wholeBBox and no visible pull-back. The
+  // multiplier only kicks in when there's an active recent set.
+  var batchPullBack = 1;
+  if (recentIds.length > 0 && lastBatchSize > 1)
+  {
+    batchPullBack = Math.max(
+      STREAM_BATCH_PULLBACK_MIN,
+      1 / (1 + STREAM_BATCH_PULLBACK_K * (lastBatchSize - 1))
+    );
+    targetScale = Math.max(STREAM_MIN_SCALE, targetScale * batchPullBack);
+  }
+
+  var cx = (focusRect.minX + focusRect.maxX) / 2;
+  var cy = (focusRect.minY + focusRect.maxY) / 2;
+  var targetTx = (cw / targetScale) / 2 - cx;
+  var targetTy = (ch / targetScale) / 2 - cy;
+
+  // When showing the whole diagram, bias the camera UP slightly so
+  // the bottom gutter is honored (otherwise centered fit would put
+  // half the gutter as extra top padding).
+  if (recentIds.length === 0)
+  {
+    targetTy -= (STREAM_BOTTOM_GUTTER / 2) / targetScale;
+  }
+
+  var nCells = 0;
+  for (var _id in model.cells) { if (_id !== '0' && _id !== '1') nCells++; }
+
+  try
+  {
+    console.log(
+      '[drawio][stream-cam]' +
+      ' immediate=' + !!immediate +
+      ' nCells=' + nCells +
+      ' recent=' + recentIds.length +
+      ' batch=' + lastBatchSize +
+      ' pullback=' + batchPullBack.toFixed(3) +
+      ' maxH=' + Math.round(maxH) +
+      ' desiredH=' + Math.round(desiredH) +
+      ' cont=' + Math.round(cw) + 'x' + Math.round(ch) +
+      ' whole=' + Math.round(wholeW) + 'x' + Math.round(wholeH) +
+      ' focus=' + Math.round(fw) + 'x' + Math.round(fh) +
+      ' fitWholeS=' + fitWholeS.toFixed(3) +
+      ' tgtS=' + targetScale.toFixed(3) +
+      ' tgtTx=' + Math.round(targetTx) +
+      ' tgtTy=' + Math.round(targetTy) +
+      ' cur(s,tx,ty)=(' + viewTransform.scale.toFixed(3) +
+        ',' + Math.round(viewTransform.tx) +
+        ',' + Math.round(viewTransform.ty) + ')'
+    );
+  }
+  catch (_) {}
+
+  // Skip when the target equals the current transform. CRITICAL for
+  // smoothness: applies to BOTH eased and immediate calls. If we
+  // skipped only on !immediate, an immediate=true call (e.g. window
+  // resize firing as our notifySize grows the iframe) would re-set
+  // "transition: none" on the SVG mid-flight and abort the 320 ms
+  // ease that the prior partial just kicked off. Skipping when
+  // nothing changed leaves the in-flight transition undisturbed.
+  var dS = Math.abs(viewTransform.scale - targetScale);
+  var dTx = Math.abs(viewTransform.tx - targetTx) * targetScale;
+  var dTy = Math.abs(viewTransform.ty - targetTy) * targetScale;
+  if (dS < 0.003 && dTx < 1.5 && dTy < 1.5)
+  {
+    try { console.log('[drawio][stream-cam] skip-noop immediate=' + !!immediate + ' dS=' + dS.toFixed(4) + ' dTx=' + dTx.toFixed(2) + ' dTy=' + dTy.toFixed(2)); } catch (_) {}
+    return;
+  }
+
+  var dur = computeTransitionDuration(
+    viewTransform.scale, viewTransform.tx, viewTransform.ty,
+    targetScale, targetTx, targetTy,
+    Math.max(cw, ch));
+  applyViewTransform(graph, targetScale, targetTx, targetTy, immediate, dur);
+}
+
+
+/**
  * End streaming mode: destroy raw graph, remove fixed container,
- * reset state.
+ * reset state. Called on error paths to fully reset the viewer.
  */
 function endStreaming()
 {
@@ -2193,9 +2825,6 @@ function endStreaming()
     deferredAnimTimer = null;
   }
 
-  stopCameraAnim();
-  recentVertexQueue = [];
-
   if (streamGraph != null)
   {
     streamGraph.destroy();
@@ -2203,11 +2832,991 @@ function endStreaming()
   }
 
   streamPendingEdges = null;
-  var prevH = containerEl.clientHeight;
   containerEl.classList.remove("streaming");
+  containerEl.classList.remove("custom-viewer");
   containerEl.style.height = '';
   streamingInitialized = false;
+  customViewerInteractive = false;
+  mermaidEarlyFinalizeFired = false;
   lastMergedMermaidText = null;
+  lastConvertedMermaidText = null;
+  lastConvertedMermaidXml = null;
+  originalCellGeometries = null;
+  originalCellStyles = null;
+  lastLayoutHints = null;
+  currentLayoutState = 'none';
+  if (layoutBtn != null) layoutBtn.style.display = 'none';
+  dblclickZoomedIn = false;
+  recentVertexQueue = [];
+  lastBatchSize = 0;
+  viewTransform = { scale: 1, tx: 0, ty: 0 };
+  viewTransformSvg = null;
+  lastFinalizedKey = null;
+  cancelZoomAnim();
+}
+
+// --- Custom viewer: finalize from stream + interactivity ---
+
+/**
+ * Promote the streaming Graph instance to be the final viewer.
+ *
+ *  - If no streamGraph exists yet (server returned faster than first
+ *    streaming partial), build one from the XML and animate every cell
+ *    in as if it had just streamed.
+ *  - Otherwise merge the final XML — idempotent for shared IDs (mermaid
+ *    stable IDs, AI-authored XML IDs) — so cells we already drew don't
+ *    re-animate. Newly arrived cells animate.
+ *  - Settle the soft-follow camera to fit-whole: clear the recent
+ *    queue so the focus bbox falls back to the whole diagram, then
+ *    let streamFollowNewCells ease the CSS transform there.
+ *  - Show the toolbar (zoom buttons + open/copy/fullscreen) and enable
+ *    wheel/drag/zoom interaction.
+ *  - If postLayout is set, run it after the camera + cell animations
+ *    have had time to settle, with mxMorphing animating cells into
+ *    their new positions.
+ */
+// Both app.ontoolinput and app.ontoolresult fire for the same
+// invocation (SDK contract), and both code paths call this function.
+// Without dedupe we run the merge + camera-settle twice — the second
+// call also wipes lastFinalizedKey so a brand-new tool call with
+// different XML will still trigger a fresh finalize.
+var lastFinalizedKey = null;
+
+function finalizeStreamingView(xml, opts)
+{
+  opts = opts || {};
+
+  var key = (xml || '') + '|' + (opts.postLayout || '') + '|' + (opts.replaceMode ? 'r' : '');
+  if (key === lastFinalizedKey)
+  {
+    try { console.log('[drawio][finalize] dedupe — same xml/opts as previous finalize, skipping'); } catch (_) {}
+    return;
+  }
+  lastFinalizedKey = key;
+
+  try
+  {
+    if (streamGraph == null)
+    {
+      initStreamGraphFromXml(xml);
+    }
+    else
+    {
+      var doc = mxUtils.parseXml(xml);
+      var prevIds = getModelCellIds(streamGraph.getModel());
+      streamPendingEdges = streamMergeXmlDelta(streamGraph, streamPendingEdges, doc.documentElement);
+      var newIds = findNewCellIds(streamGraph.getModel(), prevIds);
+
+      // Mermaid finalize: each parse is the complete state. Streaming
+      // partials emit content-hashed IDs that change when values change
+      // (e.g. accumulating Sankey totals), and the final parse may use
+      // a different healing prefix than any partial — so cells from
+      // earlier partials must be evicted before fitting, or the fit
+      // bbox includes stale geometry and Fit doesn't actually fit.
+      if (opts.replaceMode)
+      {
+        var keepIds = collectCellIdsFromXml(doc.documentElement);
+        var beforeCount = Object.keys(getModelCellIds(streamGraph.getModel())).length;
+        removeOrphanCells(streamGraph, keepIds);
+        var afterCount = Object.keys(getModelCellIds(streamGraph.getModel())).length;
+        try { console.log('[drawio][finalize-merge] replaceMode keep=' + Object.keys(keepIds).length + ' before=' + beforeCount + ' after=' + afterCount + ' removed=' + (beforeCount - afterCount) + ' newIds=' + newIds.length); } catch (_) {}
+      }
+      else
+      {
+        try { console.log('[drawio][finalize-merge] no replaceMode newIds=' + newIds.length + ' total=' + Object.keys(getModelCellIds(streamGraph.getModel())).length); } catch (_) {}
+      }
+
+      if (newIds.length > 0)
+      {
+        queueCellAnimation(streamGraph, newIds);
+      }
+    }
+  }
+  catch (e)
+  {
+    showError("Failed to render diagram: " + e.message, e);
+    return;
+  }
+
+  currentXml = xml;
+  drawioEditUrl = generateDrawioEditUrl(xml);
+
+  // Reveal the toolbar BEFORE the final fit. The toolbar adds ~50 px
+  // to the body, which the host then reflects back as a smaller
+  // available area for the diagram. Doing the fit first computed
+  // against a container that didn't yet account for the toolbar, so
+  // the diagram extended underneath it.
+  toolbarEl.style.display = "flex";
+  document.getElementById('zoom-in-btn').style.display = '';
+  document.getElementById('zoom-out-btn').style.display = '';
+  document.getElementById('zoom-fit-btn').style.display = '';
+
+  // Layout-cycle button: shown for diagrams where re-layout is
+  // meaningful — explicit verticalFlow/horizontalFlow postLayout, or
+  // any mermaid flowchart (whose default is mermaid's own layout).
+  // Capture original geometries BEFORE any postLayout runs so we can
+  // restore them when the user cycles back to "as authored".
+  var showLayoutBtn = (opts.postLayout === 'verticalFlow' ||
+                       opts.postLayout === 'horizontalFlow' ||
+                       opts.isFlowchart === true);
+  if (showLayoutBtn)
+  {
+    captureOriginalCellGeometries(streamGraph);
+    lastLayoutHints = {
+      startNodeIds: opts.startNodeIds || null,
+      endNodeIds: opts.endNodeIds || null
+    };
+    if (opts.postLayout === 'verticalFlow') currentLayoutState = 'vertical';
+    else if (opts.postLayout === 'horizontalFlow') currentLayoutState = 'horizontal';
+    else currentLayoutState = 'none';
+    layoutBtn.style.display = '';
+    updateLayoutButtonUi();
+  }
+  else
+  {
+    layoutBtn.style.display = 'none';
+  }
+
+  // Double rAF so the browser computes layout at opacity:0/translateY(8)
+  // before we toggle the .shown class — otherwise the transition is
+  // skipped and the toolbar pops in.
+  requestAnimationFrame(function()
+  {
+    requestAnimationFrame(function()
+    {
+      toolbarEl.classList.add('shown');
+    });
+  });
+
+  enableViewerInteractivity(streamGraph);
+
+  // Settle the camera to fit-whole. Clearing the recent queue makes
+  // the focus bbox fall back to the whole diagram. We use the rAF
+  // animateCameraTo helper (affine fixed-point + ease-in-out) so the
+  // path is a clean zoom out, no CSS-decomposition curve. Wait one
+  // rAF first so the toolbar layout commits and clientHeight is live.
+  // If postLayout is set, SKIP this fit — the layout step below will
+  // run its own combined camera + morph animation and we don't want
+  // two competing camera moves.
+  try { console.log('[drawio][finalize] camera-settle requested replaceMode=' + !!opts.replaceMode + ' postLayout=' + (opts.postLayout || 'none')); } catch (_) {}
+  if (!opts.postLayout)
+  {
+    requestAnimationFrame(function()
+    {
+      if (streamGraph == null) return;
+      try { console.log('[drawio][finalize] camera-settle: clearing queue (was=' + recentVertexQueue.length + ')'); } catch (_) {}
+      recentVertexQueue = [];
+      lastBatchSize = 0;
+      // Resize container to its natural-fit height (no camera move),
+      // then animate the camera from the current leading-edge view to
+      // fit-whole with ease-in-out. animateCameraTo uses the affine
+      // fixed point so the path is a clean zoom out, not a CSS
+      // component-decomposition curve.
+      resizeContainerToFit();
+      var t = computeFitWholeTransform();
+      if (t != null)
+      {
+        animateCameraTo(t.s, t.tx, t.ty, 600, easeInOutCubic);
+      }
+    });
+  }
+
+  // Post-layout: morph cells from current positions to ELK output.
+  // Delay so the pending pop animations finish first; otherwise
+  // mxMorphing snapshots a half-faded view. The camera animation is
+  // started via onMorphStart so it runs in parallel with the morph,
+  // landing on fit-whole-of-new-positions just as the cells settle.
+  if (opts.postLayout)
+  {
+    var hints = { startNodeIds: opts.startNodeIds || null, endNodeIds: opts.endNodeIds || null };
+
+    setTimeout(function()
+    {
+      try
+      {
+        applyPostLayout(streamGraph, opts.postLayout, hints, function(applied)
+        {
+          if (!applied) return;
+
+          try
+          {
+            var newXml = serializeGraphXml(streamGraph);
+            if (newXml != null)
+            {
+              currentXml = newXml;
+              drawioEditUrl = generateDrawioEditUrl(newXml);
+            }
+          }
+          catch (_) {}
+        }, function()
+        {
+          // Morph is about to start. Cells are at their new positions
+          // in the model (visual still at old positions); start camera
+          // anim now so it lands in sync with the cell morph.
+          try { console.log('[drawio][postlayout-settle] starting parallel camera anim'); } catch (_) {}
+          recentVertexQueue = [];
+          lastBatchSize = 0;
+          // Resize container for the new bbox first so fit-whole math
+          // is computed against the final container size.
+          resizeContainerToFit();
+          var t = computeFitWholeTransform();
+          if (t != null)
+          {
+            // Match mxMorphing duration (12 steps × 30 ms = 360 ms).
+            animateCameraTo(t.s, t.tx, t.ty, 360, easeInOutCubic);
+          }
+        });
+      }
+      catch (e)
+      {
+        if (typeof console !== 'undefined' && console.warn)
+        {
+          console.warn('[drawio][post-layout] error:', e);
+        }
+      }
+    }, 700);
+  }
+
+  notifySize('finalize');
+}
+
+/**
+ * Cold-start init: build a streamGraph from a complete XML when no
+ * partials were received first. Mirrors the streaming-init path but
+ * treats every cell as new so they all animate in.
+ */
+function initStreamGraphFromXml(xml)
+{
+  containerEl.innerHTML = "";
+  containerEl.classList.add("streaming");
+
+  var graphDiv = document.createElement("div");
+  graphDiv.style.width = "100%";
+  graphDiv.style.height = "100%";
+  graphDiv.style.overflow = "hidden";
+  containerEl.appendChild(graphDiv);
+
+  loadingEl.style.display = "none";
+  containerEl.style.display = "block";
+
+  streamGraph = new Graph(graphDiv);
+  streamGraph.setEnabled(false);
+  streamGraph.panGraph = function() {};
+  streamPendingEdges = [];
+  streamingInitialized = true;
+  lastFinalizedKey = null;
+
+  var doc = mxUtils.parseXml(xml);
+  streamPendingEdges = streamMergeXmlDelta(streamGraph, streamPendingEdges, doc.documentElement);
+
+  // Treat every non-root cell as new and animate it in.
+  var newIds = [];
+  var model = streamGraph.getModel();
+  for (var id in model.cells)
+  {
+    if (id !== '0' && id !== '1') newIds.push(id);
+  }
+
+  if (newIds.length > 0)
+  {
+    queueCellAnimation(streamGraph, newIds);
+  }
+}
+
+/**
+ * Wire mouse-drag panning, modifier-wheel zoom, and double-click zoom
+ * into the streaming container.
+ *
+ *   - Drag (left mouse): pan. Touch passes through so the chat scrolls.
+ *   - Ctrl/Cmd+wheel: zoom toward cursor. Plain wheel bubbles to parent
+ *     so the chat scrolls naturally over the diagram.
+ *   - Double-click: toggles between fit-whole and 100% (or 200% if fit
+ *     is already at 100%) zoomed under the cursor.
+ *
+ * All input drives viewTransform (the CSS transform on the SVG).
+ * Drag uses immediate=true to bypass the streaming transition; zoom
+ * uses immediate=false so it eases like the streaming camera.
+ */
+function enableViewerInteractivity(graph)
+{
+  if (customViewerInteractive) return;
+  customViewerInteractive = true;
+  containerEl.classList.add("custom-viewer");
+
+  var dragging = false, sx = 0, sy = 0, stx = 0, sty = 0, sscale = 1;
+  var lastClickT = 0, lastClickX = 0, lastClickY = 0;
+
+  containerEl.addEventListener('pointerdown', function(e)
+  {
+    // Mouse left-button only. Touch passes through to parent (page
+    // scroll); pen and other pointer types are ignored.
+    if (e.pointerType !== 'mouse') return;
+    if (e.button !== 0) return;
+
+    // Manual double-click detection — the browser's dblclick event
+    // fires unreliably once we call setPointerCapture, and we want
+    // each dblclick to immediately re-target the camera (interrupt
+    // any animation already in flight).
+    var now = (typeof performance !== 'undefined' && performance.now)
+      ? performance.now() : Date.now();
+    var dt = now - lastClickT;
+    var ddx = Math.abs(e.clientX - lastClickX);
+    var ddy = Math.abs(e.clientY - lastClickY);
+
+    if (dt < 350 && ddx < 6 && ddy < 6)
+    {
+      if (dblclickZoomedIn)
+      {
+        customFitView();
+        dblclickZoomedIn = false;
+      }
+      else
+      {
+        // Target 100 % normally. If fit is already at 100 % (i.e. the
+        // diagram is small enough that the fit-scale cap kicks in),
+        // 100 % is the same as fit and dblclick would be a no-op —
+        // bump to 200 % so it stays useful.
+        var rectD = containerEl.getBoundingClientRect();
+        var pxD = e.clientX - rectD.left;
+        var pyD = e.clientY - rectD.top;
+        var fitS = fitWholeScale();
+        var target = (fitS >= 0.999) ? 2.0 : 1.0;
+        customZoomToScaleAt(pxD, pyD, target);
+        dblclickZoomedIn = true;
+      }
+      lastClickT = 0;
+      return; // suppress drag start for the second click
+    }
+
+    lastClickT = now;
+    lastClickX = e.clientX;
+    lastClickY = e.clientY;
+
+    dragging = true;
+    sx = e.clientX; sy = e.clientY;
+    // Sample current camera transform at drag start; pan rewrites
+    // tx/ty directly with immediate=true so there's no transition lag.
+    sscale = viewTransform.scale;
+    stx    = viewTransform.tx;
+    sty    = viewTransform.ty;
+    cancelZoomAnim();
+    containerEl.classList.add('dragging');
+    try { containerEl.setPointerCapture(e.pointerId); } catch(_) {}
+  });
+
+  containerEl.addEventListener('pointermove', function(e)
+  {
+    if (!dragging) return;
+    var dx = (e.clientX - sx) / sscale;
+    var dy = (e.clientY - sy) / sscale;
+    // Clamp so the diagram can never be dragged entirely off-screen.
+    // setPointerCapture keeps delivering pointermove events with coords
+    // far outside the window, which would otherwise pan the SVG into
+    // oblivion with no way to recover.
+    var c = clampPan(sscale, stx + dx, sty + dy);
+    applyViewTransform(graph, sscale, c.tx, c.ty, true);
+  });
+
+  var endDrag = function(e)
+  {
+    if (!dragging) return;
+    dragging = false;
+    containerEl.classList.remove('dragging');
+    try { containerEl.releasePointerCapture(e.pointerId); } catch(_) {}
+  };
+
+  containerEl.addEventListener('pointerup', endDrag);
+  containerEl.addEventListener('pointercancel', endDrag);
+
+  // Wheel / pinch zoom. In inline mode, plain wheel falls through so
+  // the chat keeps scrolling over the diagram — only modifier-wheel
+  // zooms. In fullscreen we own the surface, so any wheel zooms.
+  // Pinch on macOS/Windows trackpads emits wheel events with ctrlKey
+  // already set, so it works under either branch.
+  // exp() handles trackpad (many small deltas) and mouse wheel (few
+  // large deltas) per-event, but the SAME multiplier feels sluggish for
+  // pinch and right for wheel — pinch fires at 60 Hz with deltaY ~1-30
+  // while a wheel click is one ~100 px delta. Split the constant by
+  // delta magnitude so pinch feels responsive without making each
+  // wheel click zoom too far.
+  containerEl.addEventListener('wheel', function(e)
+  {
+    var fullscreen = currentDisplayMode === 'fullscreen';
+    if (!fullscreen && !(e.ctrlKey || e.metaKey)) return;
+    e.preventDefault();
+    cancelZoomAnim();
+    var rect = containerEl.getBoundingClientRect();
+    var px = e.clientX - rect.left;
+    var py = e.clientY - rect.top;
+    var k = Math.abs(e.deltaY) < 50 ? 0.010 : 0.0015;
+    customZoomAt(px, py, Math.exp(-e.deltaY * k));
+  }, { passive: false });
+}
+
+/**
+ * Zoom toward (px, py) in container coords by factor. The point stays
+ * under the cursor across the zoom — same anchor math as draw.io's
+ * wheel zoom (screen = scale * (model + translate)).
+ *
+ * Applied IMMEDIATELY (no CSS transition). Wheel events stream at
+ * frame rate, so any per-event easing creates an independent-component
+ * curve and overlapping in-flight transitions. Snapping per event lets
+ * the natural event cadence carry the smoothness.
+ */
+function customZoomAt(px, py, factor)
+{
+  if (streamGraph == null) return;
+
+  var s = viewTransform.scale;
+  var newScale = Math.max(0.05, Math.min(4, s * factor));
+  var gx = px / s - viewTransform.tx;
+  var gy = py / s - viewTransform.ty;
+
+  applyViewTransform(streamGraph, newScale,
+    px / newScale - gx,
+    py / newScale - gy,
+    true);
+}
+
+/**
+ * Toolbar +/- buttons: zoom toward the container center, animated via
+ * the rAF helper so the path stays clean even at large step factors.
+ */
+function customZoomBy(factor)
+{
+  if (streamGraph == null) return;
+  var rect = containerEl.getBoundingClientRect();
+  var px = rect.width / 2;
+  var py = rect.height / 2;
+  customZoomToScaleAt(px, py, viewTransform.scale * factor);
+}
+
+/**
+ * Animate the camera from the current (scale, tx, ty) to a target
+ * state, pinning the AFFINE FIXED POINT throughout — the model point
+ * that maps to the same screen position in both states. This is the
+ * mathematically clean zoom path: a linear scale interpolation with
+ * tx/ty derived per frame from the anchor invariant.
+ *
+ * Why not CSS transition: CSS interpolates scale and translate
+ * independently, but holding any anchor fixed requires
+ * tx(t) = px/s(t) - anchorM, which is non-linear in s. The endpoints
+ * land correctly but the path curves. Driving in rAF lets us derive
+ * tx/ty from s every frame.
+ */
+var zoomAnimRaf = null;
+
+function cancelZoomAnim()
+{
+  if (zoomAnimRaf != null)
+  {
+    cancelAnimationFrame(zoomAnimRaf);
+    zoomAnimRaf = null;
+  }
+}
+
+// Easing curves for animateCameraTo. Default is ease-out cubic
+// (snappy launch, gentle landing) for click/zoom interactions.
+// Pass easeInOutCubic for fit / settle animations where both ends
+// should feel calm.
+function easeOutCubic(t)
+{
+  return 1 - Math.pow(1 - t, 3);
+}
+
+function easeInOutCubic(t)
+{
+  return t < 0.5 ? 4 * t * t * t : 1 - Math.pow(-2 * t + 2, 3) / 2;
+}
+
+/**
+ * Sample the SVG's currently-visible scale/translate from the computed
+ * transform matrix. Works mid-CSS-transition — that's the point: the
+ * value reflects where the eye is right now, not the END of the in-
+ * flight transition that viewTransform.scale/tx/ty hold.
+ *
+ * Returns null if the SVG is missing, the transform isn't a simple
+ * uniform scale + translate, or parsing fails.
+ */
+function readVisibleTransform(svg)
+{
+  if (svg == null || typeof window === 'undefined' ||
+      typeof window.getComputedStyle !== 'function') return null;
+  var t;
+  try { t = window.getComputedStyle(svg).transform; } catch (_) { return null; }
+  if (!t || t === 'none') return null;
+  var m = t.match(/matrix\(\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+),\s*([^,]+)\s*\)/);
+  if (!m) return null;
+  var a = parseFloat(m[1]);
+  var b = parseFloat(m[2]);
+  var c = parseFloat(m[3]);
+  var d = parseFloat(m[4]);
+  var e = parseFloat(m[5]);
+  var f = parseFloat(m[6]);
+  // We only ever set scale(s) translate(tx, ty), which yields
+  // matrix(s, 0, 0, s, s*tx, s*ty). Bail on anything else.
+  if (Math.abs(b) > 0.001 || Math.abs(c) > 0.001) return null;
+  if (Math.abs(a - d) > 0.001) return null;
+  if (a === 0) return null;
+  return { scale: a, tx: e / a, ty: f / a };
+}
+
+function animateCameraTo(toS, toTx, toTy, dur, easing)
+{
+  if (streamGraph == null) return;
+  cancelZoomAnim();
+
+  // Bind the SVG ref (and re-assert transform-origin) before sampling.
+  // applyViewTransform normally does this, but we need it now so we
+  // can sample + lock the visible position BEFORE any rAF fires.
+  var svg = viewTransformSvg;
+  if (svg == null || !svg.isConnected)
+  {
+    svg = streamGraph.container ? streamGraph.container.querySelector('svg') : null;
+    viewTransformSvg = svg;
+    if (svg != null) svg.style.transformOrigin = '0 0';
+  }
+
+  // Lock in the visually-current transform before we set transition:
+  // none in the rAF step. Without this, the next applyViewTransform
+  // (immediate=true) snaps the SVG from its mid-transition interpolated
+  // position to the END of the in-flight CSS transition (the value
+  // viewTransform holds), then animates from there — a visible jolt
+  // at the join from streaming-follow to fit. We force a sync reflow
+  // after the cancel so the browser commits the transition:none to the
+  // compositor before the rAF loop starts mutating transforms — without
+  // this, the in-flight composited interpolation can paint for one or
+  // two frames *alongside* the JS-driven transforms, which composes the
+  // CSS-curved path with the rAF-straight path and shows as curving.
+  var visible = readVisibleTransform(svg);
+  if (svg != null && visible != null &&
+      (Math.abs(visible.scale - viewTransform.scale) > 0.003 ||
+       Math.abs(visible.tx - viewTransform.tx) * visible.scale > 1.5 ||
+       Math.abs(visible.ty - viewTransform.ty) * visible.scale > 1.5))
+  {
+    try { console.log('[drawio][cam-anim] cancel in-flight transition + lock visible: visible(s,tx,ty)=(' + visible.scale.toFixed(3) + ',' + Math.round(visible.tx) + ',' + Math.round(visible.ty) + ') vt=(' + viewTransform.scale.toFixed(3) + ',' + Math.round(viewTransform.tx) + ',' + Math.round(viewTransform.ty) + ')'); } catch (_) {}
+    svg.style.transition = 'none';
+    svg.style.transform =
+      'scale(' + visible.scale + ') ' +
+      'translate(' + visible.tx + 'px, ' + visible.ty + 'px)';
+    viewTransform.scale = visible.scale;
+    viewTransform.tx = visible.tx;
+    viewTransform.ty = visible.ty;
+    // Force commit. Reading offsetWidth flushes pending style changes
+    // synchronously, so the compositor sees transition:none + the
+    // visible-locked transform on its next composite — not the
+    // tail end of the cancelled CSS interpolation.
+    void svg.offsetWidth;
+  }
+
+  var fromS = viewTransform.scale;
+  var fromTx = viewTransform.tx;
+  var fromTy = viewTransform.ty;
+
+  // No-op when already there (≈1 px tolerance at current scale).
+  var maxS = Math.max(fromS, toS);
+  if (Math.abs(toS - fromS) < 0.003 &&
+      Math.abs(toTx - fromTx) * maxS < 1.5 &&
+      Math.abs(toTy - fromTy) * maxS < 1.5)
+  {
+    return;
+  }
+
+  dur = Math.max(50, dur || 320);
+  var ease = easing || easeOutCubic;
+  var t0 = (typeof performance !== 'undefined' && performance.now)
+    ? performance.now() : Date.now();
+
+  var ds = fromS - toS;
+
+  // Pure pan: no fixed point exists. Linearly interpolate tx/ty —
+  // there's no curve concern when scale is constant.
+  if (Math.abs(ds) < 0.0001)
+  {
+    var stepPan = function(now)
+    {
+      zoomAnimRaf = null;
+      var t = Math.min(1, (now - t0) / dur);
+      var k = ease(t);
+      var tx = fromTx + (toTx - fromTx) * k;
+      var ty = fromTy + (toTy - fromTy) * k;
+      applyViewTransform(streamGraph, fromS, tx, ty, true);
+      if (t < 1) zoomAnimRaf = requestAnimationFrame(stepPan);
+    };
+    zoomAnimRaf = requestAnimationFrame(stepPan);
+    return;
+  }
+
+  // Affine fixed point: solve s_from*(M+tx_from) = s_to*(M+tx_to).
+  var anchorMx = (toS * toTx - fromS * fromTx) / ds;
+  var anchorMy = (toS * toTy - fromS * fromTy) / ds;
+  // Screen position of that point — invariant in both end-states.
+  var anchorPx = fromS * (anchorMx + fromTx);
+  var anchorPy = fromS * (anchorMy + fromTy);
+
+  var step = function(now)
+  {
+    zoomAnimRaf = null;
+    var t = Math.min(1, (now - t0) / dur);
+    var k = ease(t);
+    var s = fromS + (toS - fromS) * k;
+    var tx = anchorPx / s - anchorMx;
+    var ty = anchorPy / s - anchorMy;
+    applyViewTransform(streamGraph, s, tx, ty, true);
+    if (t < 1) zoomAnimRaf = requestAnimationFrame(step);
+  };
+
+  zoomAnimRaf = requestAnimationFrame(step);
+}
+
+/**
+ * Zoom to an absolute scale (e.g. 1.0 for 100 %), keeping (px, py)
+ * pinned under the cursor. Used by the dblclick toggle and zoom-button
+ * paths. Anchor at the cursor naturally becomes the affine fixed point.
+ */
+function customZoomToScaleAt(px, py, targetScale)
+{
+  if (streamGraph == null) return;
+  var fromS = viewTransform.scale;
+  var anchorMx = px / fromS - viewTransform.tx;
+  var anchorMy = py / fromS - viewTransform.ty;
+  var toS = Math.max(0.05, Math.min(4, targetScale));
+  if (Math.abs(toS - fromS) < 0.001) return;
+  var toTx = px / toS - anchorMx;
+  var toTy = py / toS - anchorMy;
+  animateCameraTo(toS, toTx, toTy, 320);
+}
+
+/**
+ * Resize the streaming container to fit the diagram's natural-fit
+ * height (without animating the camera). Mirrors the resize logic
+ * inside streamFollowNewCells but doesn't touch the SVG transform.
+ * Used by the finalize camera-settle so we can animate the camera
+ * from the leading-edge view to fit-whole instead of snap-then-ease.
+ */
+function resizeContainerToFit()
+{
+  if (streamGraph == null) return;
+  var bbox = computeWholeBBox(streamGraph.getModel());
+  if (bbox == null) return;
+  var cw = containerEl.clientWidth;
+  if (cw <= 0) return;
+  var wholeW = Math.max(bbox.maxX - bbox.minX, 1);
+  var wholeH = Math.max(bbox.maxY - bbox.minY, 1);
+  var maxH = maxViewportHeight();
+  var availW0 = Math.max(cw - STREAM_VIEWPORT_PADDING * 2, 1);
+  var widthFitScale = Math.min(availW0 / wholeW, 1);
+  var naturalH = Math.ceil(wholeH * widthFitScale +
+                           STREAM_VIEWPORT_PADDING * 2 +
+                           STREAM_BOTTOM_GUTTER);
+  var desiredH;
+  if (currentDisplayMode === 'fullscreen')
+  {
+    desiredH = maxH;
+  }
+  else
+  {
+    desiredH = Math.max(STREAM_VIEWPORT_MIN_HEIGHT,
+                        Math.min(naturalH, maxH));
+  }
+  if (Math.abs(containerEl.clientHeight - desiredH) > 1)
+  {
+    containerEl.style.height = desiredH + 'px';
+    notifySize('container-resize');
+  }
+}
+
+/**
+ * Compute the (scale, tx, ty) that fits the whole diagram centered in
+ * the current container. Mirrors the math in streamFollowNewCells for
+ * the empty-recent-queue case.
+ */
+function computeFitWholeTransform()
+{
+  if (streamGraph == null) return null;
+  var bbox = computeWholeBBox(streamGraph.getModel());
+  if (bbox == null) return null;
+  var cw = containerEl.clientWidth;
+  var ch = containerEl.clientHeight;
+  if (cw <= 0 || ch <= 0) return null;
+  var wholeW = Math.max(bbox.maxX - bbox.minX, 1);
+  var wholeH = Math.max(bbox.maxY - bbox.minY, 1);
+  var availW = Math.max(cw - STREAM_VIEWPORT_PADDING * 2, 1);
+  var availH = Math.max(ch - STREAM_VIEWPORT_PADDING * 2 -
+                        STREAM_BOTTOM_GUTTER, 1);
+  var s = Math.min(availW / wholeW, availH / wholeH, 1);
+  s = Math.max(s, STREAM_MIN_SCALE);
+  var cx = (bbox.minX + bbox.maxX) / 2;
+  var cy = (bbox.minY + bbox.maxY) / 2;
+  var tx = (cw / s) / 2 - cx;
+  var ty = (ch / s) / 2 - cy - (STREAM_BOTTOM_GUTTER / 2) / s;
+  return { s: s, tx: tx, ty: ty };
+}
+
+/**
+ * Compute the scale that fit-whole would settle at, given the current
+ * container size and model bbox. Used by the dblclick toggle to decide
+ * whether 100 % or 200 % is the meaningful "zoomed-in" target.
+ */
+function fitWholeScale()
+{
+  if (streamGraph == null) return 1;
+  var bbox = computeWholeBBox(streamGraph.getModel());
+  if (bbox == null) return 1;
+  var cw = containerEl.clientWidth;
+  var ch = containerEl.clientHeight;
+  if (cw <= 0 || ch <= 0) return 1;
+  var uw = Math.max(bbox.maxX - bbox.minX, 1);
+  var uh = Math.max(bbox.maxY - bbox.minY, 1);
+  var availW = Math.max(cw - STREAM_VIEWPORT_PADDING * 2, 1);
+  var availH = Math.max(ch - STREAM_VIEWPORT_PADDING * 2, 1);
+  return Math.min(availW / uw, availH / uh, 1);
+}
+
+/**
+ * Toolbar Fit button: ease the camera to fit-whole. Clearing
+ * recentVertexQueue makes the focus bbox fall back to the whole
+ * diagram so the same code path produces a fit-whole target.
+ */
+// --- Layout cycle button: as-authored / horizontal / vertical ---
+//
+// The toolbar layout button cycles through three states. "none" means
+// the cells stay at their as-authored positions (the streamed XML or
+// mermaid layout). "horizontal" / "vertical" run ELK and morph the
+// cells to the new positions, with a parallel camera animation to fit
+// the new bbox.
+//
+// Original geometries are captured ONCE at finalize so we can restore
+// them when the user cycles back to "none". Without this we'd lose
+// the original layout permanently after the first ELK pass.
+var originalCellGeometries = null;
+// Edge styles are mutated by normalizeEdgesToRounded in the layered
+// ELK path (curved=1 → rounded=1, no curve). Restoring geometries
+// alone leaves edges drawn as right-angles when cycling back to "as
+// authored", so we capture styles too.
+var originalCellStyles = null;
+var lastLayoutHints = null;
+var currentLayoutState = 'none'; // 'none' | 'horizontal' | 'vertical'
+
+var LAYOUT_CYCLE_NEXT = {
+  'none': 'horizontal',
+  'horizontal': 'vertical',
+  'vertical': 'none'
+};
+
+var LAYOUT_LABELS = {
+  'none': 'as authored',
+  'horizontal': 'horizontal flow',
+  'vertical': 'vertical flow'
+};
+
+function captureOriginalCellGeometries(graph)
+{
+  if (originalCellGeometries != null) return;
+  originalCellGeometries = {};
+  originalCellStyles = {};
+  var model = graph.getModel();
+  for (var id in model.cells)
+  {
+    if (id === '0' || id === '1') continue;
+    var cell = model.cells[id];
+    if (cell == null) continue;
+    if (cell.geometry != null)
+    {
+      originalCellGeometries[id] = cell.geometry.clone();
+    }
+    // Store style as-is (string). null is a valid value too.
+    originalCellStyles[id] = cell.style;
+  }
+}
+
+function restoreOriginalGeometriesToModel(model)
+{
+  if (originalCellGeometries == null) return false;
+  var any = false;
+  for (var id in originalCellGeometries)
+  {
+    var cell = model.getCell(id);
+    if (cell == null) continue;
+    model.setGeometry(cell, originalCellGeometries[id].clone());
+    // Restore style if it differs (normalizeEdgesToRounded may have
+    // mutated edge styles during a layered ELK pass).
+    if (originalCellStyles != null)
+    {
+      var origStyle = originalCellStyles[id];
+      if (cell.style !== origStyle)
+      {
+        model.setStyle(cell, origStyle);
+      }
+    }
+    any = true;
+  }
+  return any;
+}
+
+function updateLayoutButtonUi()
+{
+  var iconNone = document.getElementById('layout-icon-none');
+  var iconH = document.getElementById('layout-icon-horizontal');
+  var iconV = document.getElementById('layout-icon-vertical');
+  if (iconNone) iconNone.style.display = (currentLayoutState === 'none') ? '' : 'none';
+  if (iconH)    iconH.style.display    = (currentLayoutState === 'horizontal') ? '' : 'none';
+  if (iconV)    iconV.style.display    = (currentLayoutState === 'vertical') ? '' : 'none';
+  var next = LAYOUT_CYCLE_NEXT[currentLayoutState] || 'horizontal';
+  layoutBtn.setAttribute('title',
+    'Layout: ' + LAYOUT_LABELS[currentLayoutState] +
+    ' (click for ' + LAYOUT_LABELS[next] + ')');
+  layoutBtn.setAttribute('aria-label',
+    'Layout: ' + LAYOUT_LABELS[currentLayoutState]);
+}
+
+function applyLayoutChange(targetState)
+{
+  if (streamGraph == null) return;
+  if (targetState === currentLayoutState) return;
+
+  if (targetState === 'none')
+  {
+    if (originalCellGeometries == null) return;
+    var model = streamGraph.getModel();
+    model.beginUpdate();
+    var committed = false;
+    try
+    {
+      committed = restoreOriginalGeometriesToModel(model);
+    }
+    catch (e) { committed = false; }
+
+    if (!committed)
+    {
+      model.endUpdate();
+      return;
+    }
+
+    currentLayoutState = 'none';
+    updateLayoutButtonUi();
+
+    try
+    {
+      var morph = new mxMorphing(streamGraph, 12, 1.5, 30);
+      morph.addListener(mxEvent.DONE, function()
+      {
+        model.endUpdate();
+        try { streamGraph.sizeDidChange(); } catch (_) {}
+        // Re-hide and pen-draw edges (same pattern as applyPostLayout).
+        hideAllEdgesForMorph(streamGraph);
+        requestAnimationFrame(function()
+        {
+          penDrawAllEdgesAfterMorph(streamGraph);
+        });
+        notifySize('layout-change');
+        try
+        {
+          var newXml = serializeGraphXml(streamGraph);
+          if (newXml != null)
+          {
+            currentXml = newXml;
+            drawioEditUrl = generateDrawioEditUrl(newXml);
+          }
+        }
+        catch (_) {}
+      });
+
+      // Parallel camera anim — same pattern as the postLayout finalize.
+      recentVertexQueue = [];
+      lastBatchSize = 0;
+      resizeContainerToFit();
+      var t = computeFitWholeTransform();
+      if (t != null)
+      {
+        animateCameraTo(t.s, t.tx, t.ty, 360, easeInOutCubic);
+      }
+
+      // Hide edges before morph so vertices animate cleanly.
+      hideAllEdgesForMorph(streamGraph);
+      morph.startAnimation();
+    }
+    catch (e)
+    {
+      model.endUpdate();
+      try { streamGraph.sizeDidChange(); } catch (_) {}
+    }
+    return;
+  }
+
+  // 'horizontal' or 'vertical' — run ELK with mxMorphing.
+  var algorithm = (targetState === 'vertical') ? 'verticalFlow' : 'horizontalFlow';
+  var hints = lastLayoutHints || {};
+  var prevState = currentLayoutState;
+  currentLayoutState = targetState;
+  updateLayoutButtonUi();
+
+  try
+  {
+    applyPostLayout(streamGraph, algorithm, hints,
+      function(applied)
+      {
+        if (!applied)
+        {
+          // Revert UI state when ELK fails.
+          currentLayoutState = prevState;
+          updateLayoutButtonUi();
+          return;
+        }
+        try
+        {
+          var newXml = serializeGraphXml(streamGraph);
+          if (newXml != null)
+          {
+            currentXml = newXml;
+            drawioEditUrl = generateDrawioEditUrl(newXml);
+          }
+        }
+        catch (_) {}
+      },
+      function()
+      {
+        // onMorphStart: parallel camera anim.
+        recentVertexQueue = [];
+        lastBatchSize = 0;
+        resizeContainerToFit();
+        var t = computeFitWholeTransform();
+        if (t != null)
+        {
+          animateCameraTo(t.s, t.tx, t.ty, 360, easeInOutCubic);
+        }
+      });
+  }
+  catch (e)
+  {
+    currentLayoutState = prevState;
+    updateLayoutButtonUi();
+  }
+}
+
+function customFitView()
+{
+  if (streamGraph == null) return;
+  try { console.log('[drawio][fit-btn] clearing queue (was=' + recentVertexQueue.length + ')'); } catch (_) {}
+  recentVertexQueue = [];
+  lastBatchSize = 0;
+  // Any fit-to-whole resets the dblclick toggle so the next double
+  // click zooms IN regardless of who just fitted (Fit button, dblclick
+  // zoom-out, or display-mode change).
+  dblclickZoomedIn = false;
+  // Animate to fit-whole via the affine-fixed-point rAF helper so the
+  // path is a clean zoom (no CSS-decomposition curve). Bypasses
+  // streamFollowNewCells, which uses a CSS transition.
+  var t = computeFitWholeTransform();
+  if (t != null)
+  {
+    animateCameraTo(t.s, t.tx, t.ty, 380);
+    return;
+  }
+  // skipResize=true: scale the diagram into the existing container,
+  // don't grow/shrink the iframe. Fit means "make everything visible
+  // in the space we already have."
+  streamFollowNewCells(streamGraph, false, true);
 }
 
 // --- Streaming: incremental rendering as the LLM generates XML ---
@@ -2223,6 +3832,7 @@ function showMermaidTextPreview(partialMermaid)
   mermaidPreviewEl.textContent = partialMermaid;
   containerEl.style.display = 'none';
   toolbarEl.style.display = 'none';
+  toolbarEl.classList.remove('shown');
   mermaidPreviewEl.scrollTop = mermaidPreviewEl.scrollHeight;
 
   if (app.sendSizeChanged)
@@ -2283,6 +3893,11 @@ function handleMermaidPartial(partialMermaid)
 
   xml = stabilizeMermaidIds(xml);
 
+  // Pre-populate the convertMermaidToXml cache so finalize doesn't
+  // re-parse this text. The finalize call passes the raw partial text
+  // (args.mermaid), which usually equals the last streamed partial.
+  rememberMermaidConversion(partialMermaid, xml);
+
   // Hand off to the same merge pipeline used by XML streaming.
   try
   {
@@ -2293,7 +3908,8 @@ function handleMermaidPartial(partialMermaid)
     {
       // First parseable chunk — switch from text preview to live graph
       streamingInitialized = true;
-      introAnimPlayed = false;
+      lastFinalizedKey = null;
+      mermaidEarlyFinalizeFired = false;
       mermaidPreviewEl.style.display = 'none';
       containerEl.innerHTML = "";
       containerEl.classList.add("streaming");
@@ -2309,16 +3925,21 @@ function handleMermaidPartial(partialMermaid)
 
       streamGraph = new Graph(graphDiv);
       streamGraph.setEnabled(false);
+      // No-op mxGraph's internal pan: our camera lives in the SVG's
+      // CSS transform via applyViewTransform; if any mxGraph handler
+      // (panningHandler, autoScroll, etc.) calls panGraph, it would
+      // stack a second translate on top of ours and pull the diagram
+      // off-screen.
+      streamGraph.panGraph = function() {};
       streamPendingEdges = [];
 
       var prevIds = getModelCellIds(streamGraph.getModel());
       streamPendingEdges = streamMergeXmlDelta(streamGraph, streamPendingEdges, xmlNode);
       var newIds = findNewCellIds(streamGraph.getModel(), prevIds);
 
-      // Track recent VERTEX additions for the smart camera. Edges can
-      // span the full diagram and would bloat the focus bbox, defeating
-      // the close-up. Pop animation still uses all top-level cells.
       var topNewIds = filterTopLevelCellIds(streamGraph, newIds);
+      // Track only vertices for soft-follow — long edges would defeat
+      // the focus by spanning the diagram.
       trackRecentCells(filterVertexCellIds(streamGraph, topNewIds));
 
       // Only pop-animate top-level cells (parent === '1'). Nested cells
@@ -2326,8 +3947,8 @@ function handleMermaidPartial(partialMermaid)
       // pop is one unified motion instead of many overlapping scale-ups.
       if (topNewIds.length > 0) queueCellAnimation(streamGraph, topNewIds);
 
-      // streamFollowNewCells sets the container height + sends the
-      // size update based on the smart-camera target — no manual call.
+      // streamFollowNewCells sizes the container + soft-follows the
+      // leading edge of recent vertices.
       streamFollowNewCells(streamGraph);
     }
     else if (streamGraph != null)
@@ -2335,6 +3956,15 @@ function handleMermaidPartial(partialMermaid)
       var prevIds2 = getModelCellIds(streamGraph.getModel());
       streamPendingEdges = streamMergeXmlDelta(streamGraph, streamPendingEdges, xmlNode);
       var newIds2 = findNewCellIds(streamGraph.getModel(), prevIds2);
+
+      // Mermaid re-parses produce stable content-hashed IDs, so a value
+      // that changes mid-stream (e.g. a Sankey total accumulating) emits
+      // a new cell ID and orphans the old one. Drop those orphans so we
+      // don't see a pile-up of stale labels — see issue spotted on a
+      // Sankey diagram where "Stromproduktion 71.3", "78.3", "80.8"
+      // and "81" were all visible at once during streaming.
+      var keepIds = collectCellIdsFromXml(xmlNode);
+      removeOrphanCells(streamGraph, keepIds);
 
       var topNewIds2 = filterTopLevelCellIds(streamGraph, newIds2);
       trackRecentCells(filterVertexCellIds(streamGraph, topNewIds2));
@@ -2364,6 +3994,55 @@ app.ontoolinputpartial = function(params)
   if (partialMermaid != null && typeof partialMermaid === 'string')
   {
     handleMermaidPartial(partialMermaid);
+
+    // Once any sibling key (postLayout, startNodeIds, endNodeIds) appears
+    // in params.arguments, the JSON parser must have closed the mermaid
+    // string — those keys come *after* mermaid in the schema, so they
+    // can't surface until its closing quote was processed. That means
+    // partialMermaid is now the final mermaid value, even though we're
+    // still streaming trailing JSON. Kick off finalize + fit early
+    // instead of waiting for ontoolinput / ontoolresult, which only
+    // fire on the closing "}". The eventual ontoolinput call dedupes
+    // via lastFinalizedKey in finalizeStreamingView.
+    if (!mermaidEarlyFinalizeFired && streamingInitialized)
+    {
+      var args = params.arguments;
+      var hasSibling = false;
+      for (var k in args)
+      {
+        if (k !== 'mermaid' && Object.prototype.hasOwnProperty.call(args, k))
+        {
+          hasSibling = true;
+          break;
+        }
+      }
+
+      if (hasSibling)
+      {
+        mermaidEarlyFinalizeFired = true;
+        var earlyOpts = {
+          skipIntroAnim: true,
+          fadeIn: true,
+          postLayout: args.postLayout || null,
+          startNodeIds: args.startNodeIds || null,
+          endNodeIds: args.endNodeIds || null,
+          replaceMode: true,
+          isFlowchart: isMermaidFlowchart(partialMermaid)
+        };
+
+        try { console.log('[drawio][stream] mermaid string closed (sibling key in partial) — firing early finalize'); } catch (_) {}
+
+        waitForGraphViewer()
+          .then(function() { return convertMermaidToXml(partialMermaid); })
+          .then(function(xml) { finalizeStreamingView(xml, earlyOpts); })
+          .catch(function(_e)
+          {
+            // Swallow — ontoolinput/ontoolresult will retry with the
+            // authoritative final value and surface any error there.
+          });
+      }
+    }
+
     return;
   }
 
@@ -2404,7 +4083,7 @@ app.ontoolinputpartial = function(params)
     {
       // First usable partial: create raw Graph in fixed-size container
       streamingInitialized = true;
-      introAnimPlayed = false;
+      lastFinalizedKey = null;
       containerEl.innerHTML = "";
       containerEl.classList.add("streaming");
 
@@ -2420,6 +4099,12 @@ app.ontoolinputpartial = function(params)
       // Create raw Graph instance (not GraphViewer)
       streamGraph = new Graph(graphDiv);
       streamGraph.setEnabled(false);
+      // No-op mxGraph's internal pan: our camera lives in the SVG's
+      // CSS transform via applyViewTransform; if any mxGraph handler
+      // (panningHandler, autoScroll, etc.) calls panGraph, it would
+      // stack a second translate on top of ours and pull the diagram
+      // off-screen.
+      streamGraph.panGraph = function() {};
       streamPendingEdges = [];
 
       // Initial merge
@@ -2435,13 +4120,13 @@ app.ontoolinputpartial = function(params)
         queueCellAnimation(streamGraph, newIds);
       }
 
-      // streamFollowNewCells sets the container height + sends the
-      // size update based on the smart-camera target — no manual call.
+      // streamFollowNewCells sizes the container + soft-follows the
+      // leading edge of recent vertices.
       streamFollowNewCells(streamGraph);
     }
     else if (streamGraph != null)
     {
-      // Subsequent partials: merge delta, animate new cells, fit
+      // Subsequent partials: merge delta, animate new cells, follow
       var prevIds = getModelCellIds(streamGraph.getModel());
       streamPendingEdges = streamMergeXmlDelta(streamGraph, streamPendingEdges, xmlNode);
       var newIds = findNewCellIds(streamGraph.getModel(), prevIds);
@@ -2460,7 +4145,7 @@ app.ontoolinputpartial = function(params)
         queueCellAnimation(streamGraph, []);
       }
 
-      // Smart camera: focus on recent cells, fit-to-viewport, smooth spring
+      // Soft-follow the new leading edge.
       streamFollowNewCells(streamGraph);
     }
   }
@@ -2482,26 +4167,19 @@ app.ontoolinput = function(params)
 
   if (mermaidText != null && typeof mermaidText === 'string')
   {
-    transitionToFinalView(function()
-    {
-      mermaidPreviewEl.style.display = 'none';
-      loadingEl.style.display = 'flex';
-      loadingEl.innerHTML = '<div class="spinner"></div>Converting Mermaid diagram...';
-
-      waitForGraphViewer()
-        .then(function()
-        {
-          return convertMermaidToXml(mermaidText);
-        })
-        .then(function(xml)
-        {
-          return renderDiagram(xml, layoutOpts);
-        })
-        .catch(function(e)
-        {
-          showError("Failed to convert Mermaid diagram: " + e.message);
-        });
+    mermaidPreviewEl.style.display = 'none';
+    var mermaidOpts = Object.assign({}, layoutOpts, {
+      replaceMode: true,
+      isFlowchart: isMermaidFlowchart(mermaidText)
     });
+
+    waitForGraphViewer()
+      .then(function() { return convertMermaidToXml(mermaidText); })
+      .then(function(xml) { finalizeStreamingView(xml, mermaidOpts); })
+      .catch(function(e)
+      {
+        showError("Failed to convert Mermaid diagram: " + e.message);
+      });
 
     return;
   }
@@ -2520,13 +4198,7 @@ app.ontoolinput = function(params)
 
   try
   {
-    transitionToFinalView(function()
-    {
-      renderDiagram(xml, layoutOpts).catch(function(e)
-      {
-        showError("Failed to render diagram: " + e.message);
-      });
-    });
+    finalizeStreamingView(xml, layoutOpts);
   }
   catch (e)
   {
@@ -2591,24 +4263,19 @@ app.ontoolresult = function(result)
 
     if (mermaidText != null)
     {
-      transitionToFinalView(function()
-      {
-        mermaidPreviewEl.style.display = 'none';
-
-        waitForGraphViewer()
-          .then(function()
-          {
-            return convertMermaidToXml(mermaidText);
-          })
-          .then(function(xml)
-          {
-            return renderDiagram(xml, layoutOpts);
-          })
-          .catch(function(e)
-          {
-            showError("Failed to convert Mermaid diagram: " + e.message);
-          });
+      mermaidPreviewEl.style.display = 'none';
+      var mermaidOpts = Object.assign({}, layoutOpts, {
+        replaceMode: true,
+        isFlowchart: isMermaidFlowchart(mermaidText)
       });
+
+      waitForGraphViewer()
+        .then(function() { return convertMermaidToXml(mermaidText); })
+        .then(function(xml) { finalizeStreamingView(xml, mermaidOpts); })
+        .catch(function(e)
+        {
+          showError("Failed to convert Mermaid diagram: " + e.message);
+        });
     }
     else
     {
@@ -2617,13 +4284,14 @@ app.ontoolresult = function(result)
 
       if (normalizedXml)
       {
-        transitionToFinalView(function()
-        {
-          renderDiagram(normalizedXml, layoutOpts).catch(function(e)
+        // waitForGraphViewer ensures Graph/mxUtils/mxCodec are loaded
+        // before the cold-start init path runs.
+        waitForGraphViewer()
+          .then(function() { finalizeStreamingView(normalizedXml, layoutOpts); })
+          .catch(function(e)
           {
             showError("Failed to render diagram: " + e.message);
           });
-        });
       }
       else
       {
@@ -2663,47 +4331,157 @@ copyXmlBtn.addEventListener("click", function()
   ta.select();
   document.execCommand("copy");
   document.body.removeChild(ta);
-  copyXmlBtn.textContent = "Copied!";
-  setTimeout(function() { copyXmlBtn.textContent = "Copy to Clipboard"; }, 2000);
+  var label = document.getElementById('copy-xml-label');
+  if (label != null)
+  {
+    label.textContent = 'Copied!';
+    setTimeout(function() { label.textContent = 'Copy'; }, 2000);
+  }
 });
 
 fullscreenBtn.addEventListener("click", function()
 {
-  app.requestDisplayMode({ mode: "fullscreen" });
+  // Toggle: if we're already fullscreen, ask the host to put us back
+  // inline. The label is kept in sync via applyDisplayModeLayout when
+  // hostContext changes.
+  var nextMode = (currentDisplayMode === 'fullscreen') ? 'inline' : 'fullscreen';
+  app.requestDisplayMode({ mode: nextMode });
 });
 
-// Re-render when tab becomes visible if the viewer failed to initialize
-// or rendered with zero dimensions in the background (GraphViewer needs
-// nonzero offsetWidth; rAF-based size reporting returns 0 in hidden tabs)
+// Zoom controls (custom viewer only; buttons stay hidden otherwise).
+// Step = ×1.5 / ×0.667 — small enough to feel under control, big
+// enough that two clicks are a meaningful zoom change.
+document.getElementById('zoom-in-btn').addEventListener('click', function()
+{
+  customZoomBy(1.5);
+});
+
+document.getElementById('zoom-out-btn').addEventListener('click', function()
+{
+  customZoomBy(1 / 1.5);
+});
+
+document.getElementById('zoom-fit-btn').addEventListener('click', function()
+{
+  customFitView();
+  dblclickZoomedIn = false;
+});
+
+// Layout cycle: as-authored → horizontal → vertical → as-authored.
+layoutBtn.addEventListener('click', function()
+{
+  applyLayoutChange(LAYOUT_CYCLE_NEXT[currentLayoutState] || 'horizontal');
+});
+
+// Help → opens a Discussions topic in the drawio-mcp repo. Use
+// app.openLink because the iframe sandbox lacks allow-popups, so
+// window.open / target=_blank don't work.
+document.getElementById('help-btn').addEventListener('click', function()
+{
+  app.openLink({ url: "https://github.com/jgraph/drawio-mcp/discussions/33" });
+});
+
+// When the tab becomes visible, re-notify our size so the host can
+// re-measure the iframe. Don't call customFitView here — that would
+// reset any zoom/pan the user has applied. Stale-layout cases get
+// caught by the resize handler below.
 document.addEventListener('visibilitychange', function()
 {
-  if (!document.hidden && currentXml)
+  if (!document.hidden && currentXml && streamGraph != null)
   {
-    var svgEl = containerEl.querySelector('svg');
-    var needsRerender = graphViewer == null ||
-      svgEl == null ||
-      svgEl.getBoundingClientRect().height < 1;
-
-    if (needsRerender)
-    {
-      graphViewer = null;
-      renderDiagram(currentXml).catch(function(e)
-      {
-        showError("Failed to render diagram: " + e.message);
-      });
-    }
-    else
-    {
-      // Viewer rendered OK but host may have wrong size — update it
-      notifySize('visibilitychange');
-    }
+    notifySize('visibilitychange');
   }
 });
 
-app.connect();
+// Re-fit the camera when the iframe is resized. Fullscreen layout uses
+// flex 1 1 auto on the container, so its clientHeight changes with the
+// window without triggering a host-context-changed. Snap-fit so the
+// camera tracks the resize instantly.
+window.addEventListener('resize', function()
+{
+  if (streamGraph != null) streamFollowNewCells(streamGraph, true);
+});
+
+app.connect().then(function()
+{
+  // Pick up the initial displayMode + safeAreaInsets after handshake.
+  applyDisplayModeLayout();
+});
     </script>
   </body>
 </html>`;
+}
+
+/**
+ * Strip the trailing ESM `export{...}` statement and emit `var <name> = <local>`
+ * aliases so the bundle works when inlined as a classic <script>. ESM modules
+ * can't be loaded that way (export is a syntax error) and Blob-URL `import()`
+ * fails inside our sandboxed iframe (no allow-same-origin).
+ *
+ * @param {string} raw - Bundle source ending in `export{a as X, b as Y, ...}`.
+ * @param {object} aliasMap - { globalVarName: exportedName }. Each entry adds
+ *   one `var <globalVarName> = <localName>;` line after the (stripped) bundle.
+ * @returns {string} Processed bundle.
+ */
+function stripEsmExportsAndAlias(raw, aliasMap, bundleLabel)
+{
+  // Find the LAST export{...} statement. Bundles may have a trailing
+  // license banner comment after the export, so we don't anchor to end.
+  const exportRegex = /export\s*\{([^}]+)\}\s*;?/g;
+  let exportMatch = null;
+  let m;
+
+  while ((m = exportRegex.exec(raw)) !== null)
+  {
+    exportMatch = m;
+  }
+
+  if (exportMatch == null)
+  {
+    throw new Error("Could not find export statement in " + bundleLabel);
+  }
+
+  const entries = {};
+
+  exportMatch[1].split(",").forEach(function(e)
+  {
+    const parts = e.trim().split(/\s+as\s+/);
+    const local = parts[0];
+    const exported = parts[1] || parts[0];
+    entries[exported] = local;
+  });
+
+  // Publish via globalThis (not `var X = ...`) because we wrap the bundle
+  // in an IIFE below — `var` inside the IIFE wouldn't reach the global.
+  const aliasLines = Object.keys(aliasMap).map(function(globalName)
+  {
+    const exportedName = aliasMap[globalName];
+    const local = entries[exportedName];
+
+    if (local == null)
+    {
+      throw new Error("Could not find '" + exportedName + "' export in " + bundleLabel);
+    }
+
+    return "globalThis." + globalName + " = " + local + ";";
+  });
+
+  // Splice the export statement out and wrap the result in an IIFE.
+  //
+  // Two bundles inlined as classic scripts in the same page would otherwise
+  // share the global lexical environment. Top-level `let`/`const` use the
+  // same minifier names across bundles (e.g. `let Nr = ...`) — when the
+  // second bundle hits its own `let Nr`, the parser throws
+  // "Identifier 'Nr' has already been declared" and aborts the whole
+  // bundle script. The IIFE gives each bundle its own scope.
+  const before = raw.slice(0, exportMatch.index);
+  const after = raw.slice(exportMatch.index + exportMatch[0].length);
+
+  return "(function(){\n" +
+         before + "\n" +
+         aliasLines.join("\n") + "\n" +
+         after + "\n" +
+         "})();\n";
 }
 
 /**
@@ -2714,27 +4492,36 @@ app.connect();
  */
 export function processAppBundle(raw)
 {
-  const exportMatch = raw.match(/export\s*\{([^}]+)\}\s*;?\s*$/);
+  return stripEsmExportsAndAlias(raw, { App: "App" }, "app-with-deps.js");
+}
 
-  if (!exportMatch)
+/**
+ * Process the drawio-mermaid bundle. The bundle has shipped in two
+ * formats: an ESM build with `export{...}` at the end, and a self-
+ * contained IIFE that already assigns `globalThis.mxMermaidToDrawio`
+ * itself. Detect which one we're looking at and only run the ESM
+ * strip-and-alias path when there's actually an export statement —
+ * otherwise return the bundle as-is (the IIFE publishes the global it-
+ * self, and stripping wouldn't find anything to strip).
+ */
+export function processMermaidBundle(raw)
+{
+  if (!/export\s*\{[^}]*\}/.test(raw))
   {
-    throw new Error("Could not find export statement in app-with-deps.js");
+    return raw;
   }
 
-  const exportEntries = exportMatch[1].split(",").map(function(e)
-  {
-    const parts = e.trim().split(/\s+as\s+/);
-    return { local: parts[0], exported: parts[1] || parts[0] };
-  });
+  return stripEsmExportsAndAlias(raw, { mxMermaidToDrawio: "mxMermaidToDrawio" }, "drawio-mermaid.min.js");
+}
 
-  const appEntry = exportEntries.find(function(e) { return e.exported === "App"; });
-
-  if (!appEntry)
-  {
-    throw new Error("Could not find App export in app-with-deps.js");
-  }
-
-  return raw.slice(0, exportMatch.index) + `\nvar App = ${appEntry.local};\n`;
+/**
+ * Process the drawio-elk bundle. Bundle ships as ESM with a default export
+ * (the ELK class). Alias to `var ELK` so drawio-mermaid and mxElkLayout
+ * can read it from globalThis as before.
+ */
+export function processElkBundle(raw)
+{
+  return stripEsmExportsAndAlias(raw, { ELK: "default" }, "drawio-elk.min.js");
 }
 
 // ── Diagram validation ───────────────────────────────────────────────────────
@@ -3360,7 +5147,8 @@ export function createServer(html, options = {})
             "- `force` (ELK force-directed): network / topology diagrams without a clear hierarchy (peer-to-peer, social graphs, knowledge graphs).\n" +
             "- `stress` (ELK stress majorization): small-to-mid general graphs where `force` looks too loose — usually tighter and more readable for 10-30 nodes without a root.\n" +
             "- `radial` (ELK radial): concentric layers around a root (mind maps, centered ego networks, influence diagrams).\n" +
-            "**Omit** for diagrams whose layout carries meaning you hand-crafted: swimlanes/pools, containers, architecture / deployment / network topology with grouped regions, P&ID or circuit schematics, floor plans, UML diagrams with deliberate placement. For Mermaid diagrams, the native layout already runs ELK — set this only if you specifically want a different algorithm.\n\n" +
+            "**Omit** for diagrams whose layout carries meaning you hand-crafted: swimlanes/pools, containers, architecture / deployment / network topology with grouped regions, P&ID or circuit schematics, floor plans, UML diagrams with deliberate placement.\n\n" +
+            "**For Mermaid flowcharts**, the native parser does its own layout, but for **large flowcharts (≥ ~20 nodes)** the result is often cramped or unbalanced. Pass `postLayout: \"verticalFlow\"` (for `flowchart TD/TB`) or `postLayout: \"horizontalFlow\"` (for `flowchart LR/RL`) along with `startNodeIds` and `endNodeIds` to re-layout via the same ELK algorithm draw.io's editor uses — produces noticeably cleaner spacing on big flowcharts. Skip for small flowcharts (< 20 nodes) and for non-flowchart Mermaid types (sequence, class, ER, sankey, etc. — postLayout doesn't apply).\n\n" +
             "**When you set this to `verticalFlow` or `horizontalFlow`, you MUST also provide `startNodeIds` and `endNodeIds`** so ELK knows which nodes belong in the first and last layers."
           ),
         startNodeIds: z
@@ -3394,8 +5182,6 @@ export function createServer(html, options = {})
     {
       var hasXml = (xml != null && typeof xml === "string" && xml.trim().length > 0);
       var hasMermaid = (mermaid != null && typeof mermaid === "string" && mermaid.trim().length > 0);
-
-      try { console.log("[create_diagram] " + getBuildVersion() + " path=" + (hasMermaid ? "mermaid" : hasXml ? "xml" : "error")); } catch (e) {}
 
       if (hasXml === hasMermaid)
       {
@@ -3435,7 +5221,7 @@ export function createServer(html, options = {})
       }
       catch (e)
       {
-        try { console.log("[create_diagram] postprocessDiagramXml THREW: " + (e && e.message)); } catch (_) {}
+        // Postprocess fall-through: ship the un-postprocessed XML.
       }
 
       var content = [
