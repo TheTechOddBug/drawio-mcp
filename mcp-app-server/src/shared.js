@@ -3806,6 +3806,13 @@ function initStreamGraphFromXml(xml)
   streamGraph = new Graph(graphDiv);
   streamGraph.setEnabled(false);
   streamGraph.panGraph = function() {};
+  // Hover tooltips on UserObject cells dump every attribute
+  // (mermaidBaseStyle, mermaidBaseValue, mermaidId, …) under the
+  // toolbar — fine for the editor, distracting in the inline viewer.
+  streamGraph.setTooltips(false);
+  // No fold/unfold toggles either — this is a read-only viewer, the
+  // +/- icons on container cells just add visual noise.
+  streamGraph.foldingEnabled = false;
   streamPendingEdges = [];
   streamingInitialized = true;
   lastFinalizedKey = null;
@@ -4663,6 +4670,8 @@ function handleMermaidPartial(partialMermaid)
       // stack a second translate on top of ours and pull the diagram
       // off-screen.
       streamGraph.panGraph = function() {};
+      streamGraph.setTooltips(false);
+      streamGraph.foldingEnabled = false;
       streamPendingEdges = [];
 
       var prevIds = getModelCellIds(streamGraph.getModel());
@@ -4836,6 +4845,8 @@ app.ontoolinputpartial = function(params)
       // stack a second translate on top of ours and pull the diagram
       // off-screen.
       streamGraph.panGraph = function() {};
+      streamGraph.setTooltips(false);
+      streamGraph.foldingEnabled = false;
       streamPendingEdges = [];
 
       // Initial merge
