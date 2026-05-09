@@ -1631,6 +1631,13 @@ var pendingToolInputTimer = null;
 // re-running convertMermaidToXml + finalizeStreamingView on subsequent
 // trailing-JSON partials. Reset by endStreaming() and on stream init.
 var mermaidEarlyFinalizeFired = false;
+// Set once we've fired the one-time eased fit-whole triggered by the first
+// classDef appearance in the streamed Mermaid text. classDef typically
+// arrives near the tail of a diagram source and restyles existing nodes
+// without adding new geometry, so the recent-vertex follow keeps the
+// camera zoomed in even though styling now affects the whole diagram.
+// Reset by endStreaming() and on stream init.
+var mermaidClassDefFitFired = false;
 
 /**
  * Standalone merge: inserts or updates cells from xmlNode into the graph
@@ -3551,6 +3558,7 @@ function endStreaming()
   streamingInitialized = false;
   customViewerInteractive = false;
   mermaidEarlyFinalizeFired = false;
+  mermaidClassDefFitFired = false;
   lastMergedMermaidText = null;
   lastConvertedMermaidText = null;
   lastConvertedMermaidXml = null;
@@ -4649,6 +4657,7 @@ function handleMermaidPartial(partialMermaid)
       streamingInitialized = true;
       lastFinalizedKey = null;
       mermaidEarlyFinalizeFired = false;
+      mermaidClassDefFitFired = false;
       mermaidPreviewEl.style.display = 'none';
       containerEl.innerHTML = "";
       containerEl.classList.add("streaming");
@@ -4717,6 +4726,32 @@ function handleMermaidPartial(partialMermaid)
       }
 
       streamFollowNewCells(streamGraph);
+    }
+
+    // classDef typically appears near the end of a Mermaid source and
+    // restyles existing cells (no new geometry) — so the recent-vertex
+    // follow keeps the camera focused on the last node added before the
+    // classDef block, hiding the bulk of what's now being styled. Trigger
+    // a one-time eased fit-whole the first time classDef shows up so the
+    // user sees the full diagram as styling is applied. If more nodes
+    // arrive after classDef, recentVertexQueue refills naturally and the
+    // regular soft-follow takes over again.
+    // shared.js is rendered through a template literal in buildHtml,
+    // so any backslash inside this file is consumed once before the
+    // browser sees it (\b → U+0008, \s → s). Avoid regex escapes here
+    // by using indexOf — Mermaid requires "classDef <name>" so a
+    // space after the keyword is reliable.
+    if (!mermaidClassDefFitFired && healed.indexOf('classDef ') >= 0)
+    {
+      mermaidClassDefFitFired = true;
+      recentVertexQueue = [];
+      lastBatchSize = 0;
+      resizeContainerToFit();
+      var classDefFit = computeFitWholeTransform();
+      if (classDefFit != null)
+      {
+        animateCameraTo(classDefFit.s, classDefFit.tx, classDefFit.ty, 600, easeInOutCubic);
+      }
     }
 
     lastMergedMermaidText = healed;
@@ -5930,7 +5965,7 @@ export function createServer(html, options = {})
             "- `stress` (ELK stress majorization): small-to-mid general graphs where `force` looks too loose — usually tighter and more readable for 10-30 nodes without a root.\n" +
             "- `radial` (ELK radial): concentric layers around a root (mind maps, centered ego networks, influence diagrams).\n" +
             "**Omit** for diagrams whose layout carries meaning you hand-crafted: swimlanes/pools, containers, architecture / deployment / network topology with grouped regions, P&ID or circuit schematics, floor plans, UML diagrams with deliberate placement.\n\n" +
-            "**For Mermaid flowcharts**, the native parser does its own layout, but for **large flowcharts (≥ ~20 nodes)** the result is often cramped or unbalanced. Pass `postLayout: \"verticalFlow\"` (for `flowchart TD/TB`) or `postLayout: \"horizontalFlow\"` (for `flowchart LR/RL`) along with `startNodeIds` and `endNodeIds` to re-layout via the same ELK algorithm draw.io's editor uses — produces noticeably cleaner spacing on big flowcharts. Skip for small flowcharts (< 20 nodes) and for non-flowchart Mermaid types (sequence, class, ER, sankey, etc. — postLayout doesn't apply).\n\n" +
+            "**For Mermaid flowcharts**, the native parser does its own layout, but it produces cramped or unbalanced output once the diagram has any structural complexity. Request `postLayout` whenever ANY of the following holds: ≥ ~20 nodes, OR ≥ 3 decision diamonds (`{...}` shapes), OR any feedback/back-edges (an edge that points to an earlier node, e.g. an error path looping back to a retry), OR ≥ 3 distinct endpoints. Pass `postLayout: \"verticalFlow\"` (for `flowchart TD/TB`) or `postLayout: \"horizontalFlow\"` (for `flowchart LR/RL`) along with `startNodeIds` and `endNodeIds` to re-layout via the same ELK algorithm draw.io's editor uses. **Exception: omit `postLayout` whenever the source uses a `--- title: ... ---` frontmatter block.** ELK's layered algorithm has no concept of a title and squashes it into a layer alongside the flow nodes (e.g. as the leftmost column for `horizontalFlow`), which crushes the actual diagram. Mermaid's native layout positions the title correctly above the graph, so let it handle titled diagrams unchanged. Skip for simple flowcharts (linear chains, < 20 nodes, no branching/back-edges) and for non-flowchart Mermaid types (sequence, class, ER, sankey, etc. — postLayout doesn't apply).\n\n" +
             "**When you set this to `verticalFlow` or `horizontalFlow`, you MUST also provide `startNodeIds` and `endNodeIds`** so ELK knows which nodes belong in the first and last layers."
           ),
         startNodeIds: z
