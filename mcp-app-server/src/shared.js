@@ -133,15 +133,25 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         /* Hard cap (inline mode only) so the iframe never grows past
            the chat viewport. The host (Claude.ai) only honors
            sendSizeChanged growth, not shrinks — conservative start.
-           Fullscreen overrides this below. */
-        max-height: 480px;
+           Fullscreen overrides this below. The toolbar Expand button
+           swaps --inline-max-h via body.expanded for diagrams where
+           480 px clips a tall diagram. */
+        max-height: var(--inline-max-h, 480px);
         position: relative;
+      }
+      body.expanded {
+        --inline-max-h: 1000px;
       }
       /* In fullscreen, the iframe IS the viewport (with body padding
          reserved for the prompt overlay), so let the streaming card
          fill all the available height instead of clipping at 480 px. */
       body.fullscreen #diagram-container.streaming {
         max-height: none;
+      }
+      /* Expand and fullscreen are mutually exclusive — fullscreen
+         already gives full vertical real estate, so hide expand there. */
+      body.fullscreen #expand-btn {
+        display: none !important;
       }
       /* In fullscreen we want the diagram surface to go edge-to-edge:
          no card inset, no border, no rounded corners. Otherwise dragging
@@ -310,6 +320,20 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
       <button id="fullscreen-btn" class="icon-only" title="Toggle fullscreen" aria-label="Toggle fullscreen">
         <svg id="fs-icon-enter" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 8 4 4 8 4"/><polyline points="16 4 20 4 20 8"/><polyline points="20 16 20 20 16 20"/><polyline points="8 20 4 20 4 16"/></svg>
         <svg id="fs-icon-exit" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><polyline points="8 4 8 8 4 8"/><polyline points="16 4 16 8 20 8"/><polyline points="20 16 16 16 16 20"/><polyline points="4 16 8 16 8 20"/></svg>
+      </button>
+      <button id="expand-btn" class="icon-only" style="display:none" title="Expand vertically" aria-label="Expand vertically">
+        <svg id="expand-icon-expand" viewBox="0 0 24 24" aria-hidden="true">
+          <polyline points="8 7 12 3 16 7"/>
+          <line x1="12" y1="3" x2="12" y2="11"/>
+          <polyline points="8 17 12 21 16 17"/>
+          <line x1="12" y1="13" x2="12" y2="21"/>
+        </svg>
+        <svg id="expand-icon-collapse" viewBox="0 0 24 24" aria-hidden="true" style="display:none">
+          <polyline points="8 3 12 7 16 3"/>
+          <line x1="12" y1="7" x2="12" y2="11"/>
+          <polyline points="8 21 12 17 16 21"/>
+          <line x1="12" y1="13" x2="12" y2="17"/>
+        </svg>
       </button>
       <button id="layout-btn" class="icon-only" style="display:none" title="Layout: as authored" aria-label="Cycle layout">
         <svg id="layout-icon-none" viewBox="0 0 24 24" aria-hidden="true">
@@ -2888,9 +2912,13 @@ var STREAM_VIEWPORT_MIN_HEIGHT = 200;
 // iframe in response to sendSizeChanged but doesn't honor shrinks,
 // so we have to start conservative — anything taller than this would
 // push the chat prompt off-screen on typical laptop viewports.
-// Must match the CSS max-height on #diagram-container.streaming so the
-// JS fit math agrees with the rendered height.
+// Must match the CSS max-height on #diagram-container.streaming
+// (--inline-max-h) so the JS fit math agrees with the rendered height.
+// The Expand toolbar button bumps this to STREAM_VIEWPORT_MAX_HEIGHT_EXPANDED
+// for diagrams where 480 px clips a tall layout.
 var STREAM_VIEWPORT_MAX_HEIGHT_INLINE = 480;
+var STREAM_VIEWPORT_MAX_HEIGHT_INLINE_DEFAULT = 480;
+var STREAM_VIEWPORT_MAX_HEIGHT_EXPANDED = 1000;
 // Padding around the focus bbox at fit-whole, in container pixels.
 var STREAM_VIEWPORT_PADDING = 24;
 // Minimum scale clamp — large diagrams need to zoom out enough that
@@ -3665,6 +3693,7 @@ function finalizeStreamingView(xml, opts)
   document.getElementById('zoom-in-btn').style.display = '';
   document.getElementById('zoom-out-btn').style.display = '';
   document.getElementById('zoom-fit-btn').style.display = '';
+  document.getElementById('expand-btn').style.display = '';
 
   // Layout button: shown for diagrams where re-layout is meaningful —
   // explicit verticalFlow/horizontalFlow postLayout, or any mermaid
@@ -5138,6 +5167,36 @@ fullscreenBtn.addEventListener("click", function()
   // hostContext changes.
   var nextMode = (currentDisplayMode === 'fullscreen') ? 'inline' : 'fullscreen';
   app.requestDisplayMode({ mode: nextMode });
+});
+
+// Expand toggle: bump the inline max-height cap so tall diagrams that
+// fit-zoom out due to height (not width) can use more vertical real
+// estate. Two states — default (480 px) and expanded (1000 px). The
+// host (Claude.ai) only honors sendSizeChanged growth, not shrinks, so
+// going from expanded → default may not actually shrink the iframe in
+// production; the CSS cap will still apply but the iframe stays tall.
+document.getElementById('expand-btn').addEventListener('click', function()
+{
+  var btn = document.getElementById('expand-btn');
+  var iconExpand = document.getElementById('expand-icon-expand');
+  var iconCollapse = document.getElementById('expand-icon-collapse');
+  var isExpanded = document.body.classList.toggle('expanded');
+  STREAM_VIEWPORT_MAX_HEIGHT_INLINE = isExpanded
+    ? STREAM_VIEWPORT_MAX_HEIGHT_EXPANDED
+    : STREAM_VIEWPORT_MAX_HEIGHT_INLINE_DEFAULT;
+  iconExpand.style.display = isExpanded ? 'none' : '';
+  iconCollapse.style.display = isExpanded ? '' : 'none';
+  var label = isExpanded ? 'Collapse to default size' : 'Expand vertically';
+  btn.setAttribute('title', label);
+  btn.setAttribute('aria-label', label);
+  // Resize container to its new natural-fit height (notifies host of
+  // the new desired iframe height), then refit the camera so the new
+  // vertical real estate gets used.
+  resizeContainerToFit();
+  requestAnimationFrame(function()
+  {
+    customFitView();
+  });
 });
 
 // Zoom controls (custom viewer only; buttons stay hidden otherwise).
