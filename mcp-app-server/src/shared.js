@@ -1499,14 +1499,14 @@ function applyPostLayout(graph, algorithm, hints, onDone, onMorphStart, awaitBef
     }
   }
 
-  // Run ELK and the pre-morph wait in parallel — the morph starts as
-  // soon as both have completed. ELK is the variable cost (100–500 ms
-  // for big diagrams); awaitBeforeMorph lets the caller hold the morph
-  // until pending pop-in animations settle, so mxMorphing snapshots a
-  // fully-opaque view. Without overlap, ELK and animation time would add.
-  Promise.all([new ELK().layout(elkGraph), awaitBeforeMorph || Promise.resolve()]).then(function(values)
+  // ELK gates layout application; awaitBeforeMorph gates mxMorphing
+  // separately. ELK is the variable cost (100–500 ms for big diagrams).
+  // The camera ease is decoupled from mxMorphing's snapshot, so it
+  // fires as soon as ELK has applied — no need to wait for pop-in
+  // animations to settle. mxMorphing still waits, because it snapshots
+  // cell opacity and would otherwise capture a half-faded view.
+  new ELK().layout(elkGraph).then(function(result)
   {
-    var result = values[0];
     model.beginUpdate();
 
     var committed = false;
@@ -1529,89 +1529,91 @@ function applyPostLayout(graph, algorithm, hints, onDone, onMorphStart, awaitBef
     }
     catch (e)
     {
-      // ELK application failed; model.endUpdate() in finally will
-      // unwind the partial changes cleanly.
+      // ELK application failed.
     }
-    finally
-    {
-      if (committed)
-      {
-        // Commit with morph animation — morph captures the current
-        // view state (pre-ELK positions) and animates to the new
-        // model state, calling endUpdate on DONE.
-        //
-        // Don't call graph.fit() here: graph.fit mutates view.scale
-        // and view.translate, which would compose with our CSS
-        // viewTransform and double-scale the diagram. The caller
-        // re-runs streamFollowNewCells(graph) after done(true) to
-        // ease the CSS transform to the new fit. sizeDidChange is
-        // still needed so the SVG dims track the new bbox.
-        var refit = function()
-        {
-          try { graph.sizeDidChange(); } catch (_) {}
-        };
 
-        try
-        {
-          // 12 steps × ~30 ms ≈ 360 ms of cell morphing. Long enough
-          // to feel like a real layout transition, short enough to
-          // not drag. We pair this with a parallel camera animation
-          // (started via onMorphStart) for a single combined
-          // "diagram settles into its layout" beat.
-          var morph = new mxMorphing(graph, 12, 1.5, 30);
-          morph.addListener(mxEvent.DONE, function()
-          {
-            model.endUpdate();
-            refit();
-            // After endUpdate the view re-renders edges with their new
-            // waypoints/styles. Hide them synchronously so a paint
-            // can't sneak in showing stale-looking edges, then animate
-            // them back in. The first post-stream layout pairs with
-            // vertex pop-in so we pen-draw along the BFS schedule;
-            // subsequent layout-button toggles fade everything in
-            // together — the topological wipe is too slow on a model
-            // whose vertices are just morphing positions.
-            hideAllEdgesForMorph(graph);
-            requestAnimationFrame(function()
-            {
-              if (fadeEdges) fadeInAllEdgesAfterMorph(graph);
-              else penDrawAllEdgesAfterMorph(graph);
-            });
-            notifySize('postLayout');
-            try { containerEl.classList.remove('morph-active'); } catch (_) {}
-            done(true);
-          });
-          // Fire onMorphStart RIGHT BEFORE startAnimation: positions
-          // are already committed to the model (caller can compute
-          // fit-whole), but the visual morph hasn't begun yet, so a
-          // camera animation kicked off here lands in sync.
-          if (typeof onMorphStart === 'function')
-          {
-            try { onMorphStart(); } catch (_) {}
-          }
-          // Hide edges before morph starts so vertex animation isn't
-          // visually polluted by misaligned waypoints during the move.
-          hideAllEdgesForMorph(graph);
-          // Relax overflow on the SVG + mxgraph wrappers so cells
-          // passing through positions outside the OLD bbox aren't
-          // clipped before sizeDidChange/camera fit catches up.
-          try { containerEl.classList.add('morph-active'); } catch (_) {}
-          morph.startAnimation();
-        }
-        catch (e)
+    if (!committed)
+    {
+      model.endUpdate();
+      done(false);
+      return;
+    }
+
+    // Commit with morph animation — morph captures the current
+    // view state (pre-ELK positions) and animates to the new
+    // model state, calling endUpdate on DONE.
+    //
+    // Don't call graph.fit() here: graph.fit mutates view.scale
+    // and view.translate, which would compose with our CSS
+    // viewTransform and double-scale the diagram. The caller
+    // re-runs streamFollowNewCells(graph) after done(true) to
+    // ease the CSS transform to the new fit. sizeDidChange is
+    // still needed so the SVG dims track the new bbox.
+    var refit = function()
+    {
+      try { graph.sizeDidChange(); } catch (_) {}
+    };
+
+    // Camera ease fires NOW — model has new positions so the caller's
+    // computeFitWholeTransform sees the post-ELK bbox. The camera path
+    // doesn't depend on cell opacity, so we don't have to wait for
+    // pop-in to finish. The cell morph will follow whenever the
+    // animations-settled gate resolves.
+    if (typeof onMorphStart === 'function')
+    {
+      try { onMorphStart(); } catch (_) {}
+    }
+
+    (awaitBeforeMorph || Promise.resolve()).then(function()
+    {
+      try
+      {
+        // 12 steps × ~30 ms ≈ 360 ms of cell morphing. Long enough
+        // to feel like a real layout transition, short enough to
+        // not drag.
+        var morph = new mxMorphing(graph, 12, 1.5, 30);
+        morph.addListener(mxEvent.DONE, function()
         {
           model.endUpdate();
           refit();
+          // After endUpdate the view re-renders edges with their new
+          // waypoints/styles. Hide them synchronously so a paint
+          // can't sneak in showing stale-looking edges, then animate
+          // them back in. The first post-stream layout pairs with
+          // vertex pop-in so we pen-draw along the BFS schedule;
+          // subsequent layout-button toggles fade everything in
+          // together — the topological wipe is too slow on a model
+          // whose vertices are just morphing positions.
+          hideAllEdgesForMorph(graph);
+          requestAnimationFrame(function()
+          {
+            if (fadeEdges) fadeInAllEdgesAfterMorph(graph);
+            else penDrawAllEdgesAfterMorph(graph);
+          });
           notifySize('postLayout');
+          try { containerEl.classList.remove('morph-active'); } catch (_) {}
           done(true);
-        }
+        });
+        // Hide edges immediately before startAnimation so vertex
+        // animation isn't visually polluted by misaligned waypoints
+        // during the move. Deferred until now (rather than at ELK-done)
+        // so streaming pen-draws aren't cut short while we wait for
+        // awaitBeforeMorph to settle.
+        hideAllEdgesForMorph(graph);
+        // Relax overflow on the SVG + mxgraph wrappers so cells
+        // passing through positions outside the OLD bbox aren't
+        // clipped before sizeDidChange/camera fit catches up.
+        try { containerEl.classList.add('morph-active'); } catch (_) {}
+        morph.startAnimation();
       }
-      else
+      catch (e)
       {
         model.endUpdate();
-        done(false);
+        refit();
+        notifySize('postLayout');
+        done(true);
       }
-    }
+    });
   }).catch(function(e)
   {
     done(false);
@@ -4018,12 +4020,11 @@ function finalizeStreamingView(xml, opts)
 
   // Post-layout: morph cells from current positions to ELK output.
   // Kick off ELK immediately and let it run in parallel with the tail
-  // of the pop-in animations. applyPostLayout holds the morph until
-  // both have completed, so mxMorphing snapshots a fully-opaque view
-  // without imposing a fixed delay (which under-shot deep diagrams and
-  // over-shot shallow ones). The camera animation is started via
-  // onMorphStart so it runs in parallel with the morph, landing on
-  // fit-whole-of-new-positions just as the cells settle.
+  // of the pop-in animations. applyPostLayout fires the camera ease
+  // (onMorphStart) as soon as ELK has applied — decoupled from pop-in
+  // settle, so the zoom-to-fit doesn't sit idle waiting for the last
+  // edge label to fade. mxMorphing itself still waits for pop-in to
+  // settle so the snapshot captures a fully-opaque view.
   if (opts.postLayout)
   {
     var hints = { startNodeIds: opts.startNodeIds || null, endNodeIds: opts.endNodeIds || null };
@@ -4045,15 +4046,33 @@ function finalizeStreamingView(xml, opts)
           }
         }
         catch (_) {}
+
+        // Second-stage fit: cells have just morphed into place and
+        // sizeDidChange has run, so the SVG/container bounds are now
+        // final. The ELK-done fit was based on the pre-morph view
+        // dimensions; a rAF later we re-measure and adjust. If the
+        // bounds didn't move, animateCameraTo no-ops (~1 px tolerance).
+        requestAnimationFrame(function()
+        {
+          if (streamGraph == null) return;
+          resizeContainerToFit();
+          var t2 = computeFitWholeTransform();
+          if (t2 != null)
+          {
+            animateCameraTo(t2.s, t2.tx, t2.ty, 220, easeInOutCubic);
+          }
+        });
       }, function()
       {
-        // Morph is about to start. Cells are at their new positions
-        // in the model (visual still at old positions); start camera
-        // anim now so it lands in sync with the cell morph.
+        // First-stage fit: ELK has just applied, so the model has the
+        // post-layout positions. Fire the camera ease now rather than
+        // waiting for pop-in animations to settle — this is the visible
+        // zoom-to-fit, and decoupling it from the opacity gate removes
+        // the dead time between the last cell popping and the camera
+        // moving. A second adjust fires from onDone once bounds are
+        // pixel-final.
         recentVertexQueue = [];
         lastBatchSize = 0;
-        // Resize container for the new bbox first so fit-whole math
-        // is computed against the final container size.
         resizeContainerToFit();
         var t = computeFitWholeTransform();
         if (t != null)
