@@ -1,6 +1,6 @@
 {
   "name": "@drawio/mcp",
-  "version": "1.2.6",
+  "version": "1.2.7",
   "description": "Official draw.io MCP server for LLMs - Open diagrams in draw.io editor",
   "type": "module",
   "main": "src/index.js",
@@ -8,7 +8,7 @@
     "drawio-mcp": "./src/index.js"
   },
   "scripts": {
-    "copy-shared": "cp ../shared/xml-reference.md src/xml-reference.md && cp ../shared/mermaid-reference.md src/mermaid-reference.md && cp ../postprocessor/postprocess.js src/postprocessor/postprocess.js",
+    "copy-shared": "cp ../shared/xml-reference.md src/xml-reference.md && cp ../shared/mermaid-reference.md src/mermaid-reference.md",
     "start": "node src/index.js",
     "prestart": "npm run copy-shared",
     "prepack": "npm run copy-shared"
@@ -40,7 +40,6 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "^1.27.1",
-    "@xmldom/xmldom": "^0.9.8",
     "pako": "^2.1.0"
   },
   "files": [

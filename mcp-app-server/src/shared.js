@@ -6,23 +6,6 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { normalizeDiagramXml, INVALID_DIAGRAM_XML_MESSAGE } from "./normalize-diagram-xml.js";
-import postprocessModule from "../../postprocessor/postprocess.js";
-var postprocessDiagramXml = postprocessModule.postprocess;
-
-// Cloudflare Workers don't give you wall-clock time at module-init —
-// new Date() at top-level returns epoch (1970). We lazy-initialize
-// the version string on first request (which has real wall-clock),
-// and cache it. Value will be close to "first request after the
-// worker cold-started" which is a few ms after deploy rollout.
-var _buildVersion = null;
-function getBuildVersion()
-{
-  if (_buildVersion == null)
-  {
-    _buildVersion = "drawio-mcp-" + new Date().toISOString();
-  }
-  return _buildVersion;
-}
 
 /**
  * Build the self-contained HTML string that renders diagrams.
@@ -37,6 +20,7 @@ function getBuildVersion()
  * @param {string} [options.viewerJs] - If provided, inlines this JS instead of loading viewer-static.min.js from CDN.
  * @param {string} [options.elkJs] - The drawio-elk IIFE bundle. Defines `var ELK` consumed by drawio-mermaid and mxElkLayout. Inlined before mermaid.
  * @param {string} [options.mxElkLayoutJs] - The mxElkLayout wrapper. Requires ELK on globalThis (load order: elk → mermaid → mxElkLayout).
+ * @param {string} [options.buildId] - Build identifier (git SHA + timestamp). Exposed as window.__DRAWIO_BUILD in the iframe.
  * @returns {string} Self-contained HTML string.
  */
 export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
@@ -44,7 +28,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
   var viewerJs = (options && options.viewerJs) || null;
   var elkJs = (options && options.elkJs) || null;
   var mxElkLayoutJs = (options && options.mxElkLayoutJs) || null;
-  var buildVersion = (options && options.buildVersion) || ('drawio-mcp-' + new Date().toISOString());
+  var buildId = (options && options.buildId) || "unknown";
   return `<!DOCTYPE html>
 <html lang="en">
   <head>
@@ -290,7 +274,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
       }
     </style>
     <script>
-      window.__DRAWIO_BUILD = ${JSON.stringify(buildVersion)};
+      window.__DRAWIO_BUILD = ${JSON.stringify(buildId)};
     </script>
   </head>
   <body>
@@ -5302,7 +5286,7 @@ app.ontoolresult = function(result)
 
   if (textBlock && textBlock.type === "text")
   {
-    // Unified payload: {xml|mermaid, postLayout, startNodeIds, endNodeIds, _version} as JSON.
+    // Unified payload: {xml|mermaid, postLayout, startNodeIds, endNodeIds, _buildId} as JSON.
     // Fall back to treating the raw text as XML if JSON parsing fails.
     var mermaidText = null;
     var xmlText = null;
@@ -6205,18 +6189,13 @@ function searchShapes(shapeIndex, tagMap, query, limit)
  * @param {string} [options.xmlReference] - XML generation reference text for the tool description.
  * @param {string} [options.mermaidReference] - Mermaid syntax reference text appended to the tool description.
  * @param {Array} [options.shapeIndex] - Shape search index array from search-index.json.
- * @param {object} [options.serverOptions] - Optional McpServer constructor options (e.g. jsonSchemaValidator).
+ * @param {string} [options.buildId] - Build identifier (git SHA + timestamp). Echoed back in every tool response as `_buildId` so you can confirm which deploy you're hitting.
  * @returns {McpServer}
  */
 export function createServer(html, options = {})
 {
-  const { domain, xmlReference = "", mermaidReference = "", shapeIndex = null, serverOptions = {} } = typeof options === "object" && options !== null
-    ? options
-    : { serverOptions: options };
-  const server = new McpServer(
-    { name: "drawio-mcp-app", version: "1.0.0" },
-    serverOptions,
-  );
+  const { domain, xmlReference = "", mermaidReference = "", shapeIndex = null, buildId = "unknown" } = options;
+  const server = new McpServer({ name: "drawio-mcp-app", version: "1.0.0" });
 
   const resourceUri = "ui://drawio/mcp-app.html";
 
@@ -6346,11 +6325,11 @@ export function createServer(html, options = {})
       if (hasMermaid)
       {
         return {
-          content: [{ type: "text", text: JSON.stringify({ mermaid: mermaid, postLayout: postLayout || null, startNodeIds: startNodeIds || null, endNodeIds: endNodeIds || null, _version: getBuildVersion() }) }],
+          content: [{ type: "text", text: JSON.stringify({ mermaid: mermaid, postLayout: postLayout || null, startNodeIds: startNodeIds || null, endNodeIds: endNodeIds || null, _buildId: buildId }) }],
         };
       }
 
-      // XML path: normalize, postprocess, validate
+      // XML path: normalize, validate
       var normalizedXml = normalizeDiagramXml(xml);
 
       if (!normalizedXml)
@@ -6362,21 +6341,8 @@ export function createServer(html, options = {})
         };
       }
 
-      // Server-side postprocess: xmldom normalization only (repairs
-      // malformed AI XML so mxCodec can decode it). ELK edge routing
-      // moved client-side — elkjs can't run in Cloudflare Workers.
-      try
-      {
-        var ppResult = await postprocessDiagramXml(normalizedXml);
-        normalizedXml = ppResult.xml;
-      }
-      catch (e)
-      {
-        // Postprocess fall-through: ship the un-postprocessed XML.
-      }
-
       var content = [
-        { type: "text", text: JSON.stringify({ xml: normalizedXml, postLayout: postLayout || null, startNodeIds: startNodeIds || null, endNodeIds: endNodeIds || null, _version: getBuildVersion() }) }
+        { type: "text", text: JSON.stringify({ xml: normalizedXml, postLayout: postLayout || null, startNodeIds: startNodeIds || null, endNodeIds: endNodeIds || null, _buildId: buildId }) }
       ];
 
       // Validate and append warnings/errors so the LLM can self-correct

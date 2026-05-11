@@ -112,7 +112,7 @@ This starts a local Workers dev server at `http://localhost:8787/mcp`.
 |---|---|---|
 | **Transport** | `StreamableHTTPServerTransport` (Express) | `WebStandardStreamableHTTPServerTransport` (Web Standard `Request`/`Response`) |
 | **HTML build** | Reads bundles from `node_modules` at startup | Pre-built at deploy time via `src/build-html.js` → `src/generated-html.js` |
-| **Schema validation** | Default (Zod-based) | Uses `@cfworker/json-schema` (Workers-compatible) |
+| **Schema validation** | Default (Zod-based) | Default (Zod-based) |
 
 ## Architecture
 

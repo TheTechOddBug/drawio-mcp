@@ -5,8 +5,39 @@ import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/
 import { createMcpExpressApp } from "@modelcontextprotocol/sdk/server/express.js";
 import fs from "node:fs";
 import path from "node:path";
+import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import { buildHtml, processAppBundle, processMermaidBundle, processElkBundle, createServer } from "./shared.js";
+
+// Build identifier: git SHA + ISO timestamp + "-dirty" if uncommitted
+// changes. Same logic as build-html.js — kept in sync for the Node
+// path which doesn't go through the prebuild step.
+function getBuildId()
+{
+  var sha = "no-git";
+  var dirty = "";
+
+  try
+  {
+    sha = execSync("git rev-parse --short HEAD", { cwd: path.dirname(fileURLToPath(import.meta.url)), stdio: ["pipe", "pipe", "ignore"] }).toString().trim();
+
+    try
+    {
+      var status = execSync("git status --porcelain", { cwd: path.dirname(fileURLToPath(import.meta.url)), stdio: ["pipe", "pipe", "ignore"] }).toString().trim();
+
+      if (status)
+      {
+        dirty = "-dirty";
+      }
+    }
+    catch (e) {}
+  }
+  catch (e) {}
+
+  return sha + dirty + "@" + new Date().toISOString();
+}
+
+const buildId = getBuildId();
 
 // Read the browser bundles once at startup and inline them into the HTML
 const extAppsEntry = fileURLToPath(import.meta.resolve("@modelcontextprotocol/ext-apps/app-with-deps"));
@@ -102,10 +133,9 @@ if (fs.existsSync(shapeIndexPath))
   console.log("Shape index: " + shapeIndex.length + " shapes");
 }
 
-// Pre-build the HTML once. The build version timestamp is baked into
-// the HTML so the iframe can log it on startup (visible in DevTools).
-const buildVersion = "drawio-mcp-" + new Date().toISOString();
-const html = buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, { viewerJs, elkJs, mxElkLayoutJs, buildVersion });
+// Pre-build the HTML once. The buildId is baked into the HTML so the
+// iframe exposes it via window.__DRAWIO_BUILD (visible in DevTools).
+const html = buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, { viewerJs, elkJs, mxElkLayoutJs, buildId });
 
 // --- Transport setup ---
 
@@ -163,7 +193,7 @@ async function startStreamableHTTPServer()
       return origEnd(chunk);
     };
 
-    const server = createServer(html, { domain: process.env.DOMAIN, xmlReference, mermaidReference, shapeIndex });
+    const server = createServer(html, { domain: process.env.DOMAIN, xmlReference, mermaidReference, shapeIndex, buildId });
 
     const transport = new StreamableHTTPServerTransport(
     {
@@ -215,7 +245,7 @@ async function startStreamableHTTPServer()
 
 async function startStdioServer()
 {
-  await createServer(html, { domain: process.env.DOMAIN, xmlReference, mermaidReference, shapeIndex }).connect(new StdioServerTransport());
+  await createServer(html, { domain: process.env.DOMAIN, xmlReference, mermaidReference, shapeIndex, buildId }).connect(new StdioServerTransport());
 }
 
 async function main()
