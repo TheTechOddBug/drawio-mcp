@@ -244,7 +244,15 @@ mxElkLayout.prototype.applyElkLayout = function(elkGraph)
 			resetEdgePoints: true,
 			// drawio-mcp doesn't grow compounds to fit children — the
 			// mermaid import already sized subgraph containers correctly.
-			resizeParent: false
+			resizeParent: false,
+			// Tells the applier to write orthogonal=1 onto every edge it
+			// touches, so drawio's renderer projects the first/last segment
+			// perpendicular onto the pinned exitX/Y / entryX/Y fraction.
+			// Without this the renderer cuts a diagonal stub from each
+			// bend down to the terminal — visible on mermaid edges that
+			// keep curved=1 in their base style.
+			orthogonalRouting: this.edgeRouting !== 'POLYLINE'
+				&& this.edgeRouting !== 'SPLINES'
 		});
 
 	applier.apply(elkGraph);
