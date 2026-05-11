@@ -1,185 +1,118 @@
 /**
  * Copyright (c) 2019-2024, JGraph Holdings Ltd
- */
-/**
- * Class: mxElkLayout
  *
- * Extends <mxGraphLayout> to implement ELK (Eclipse Layout Kernel) algorithms.
- * Requires elk.bundled.js to be loaded before use.
+ * mxElkLayout — drawio-mcp shim over the bundled drawio-elk bridge.
  *
- * Supported algorithms: layered, mrtree, radial, force, stress, disco, rectpacking
+ * Historically this file carried its own flat mxGraph → ELK adapter
+ * (~400 lines). The mxGraph ↔ ELK bridge now lives inside
+ * `drawio-elk.min.js` as `window.ElkLayout` / `window.ElkAdapter` /
+ * `window.ElkApplier`, shared with drawio-dev. This file is now a thin
+ * compatibility shim that preserves the `mxElkLayout` constructor /
+ * `buildElkGraph` / `applyElkLayout` / `executeAsync` / `execute` API
+ * that shared.js's postLayout flow expects, while delegating the work
+ * to ElkAdapter + ElkApplier.
  *
- * Example:
+ * The bridge does hierarchical (compound) conversion — containers
+ * become ELK compound nodes whose children are laid out together,
+ * matching drawio-dev's behavior. The old flat conversion (every cell
+ * a top-level sibling, edges remapped via ancestor lookup) is gone.
  *
- * (code)
- * var layout = new mxElkLayout(graph);
- * layout.algorithm = 'layered';
- * layout.direction = 'RIGHT';
- * layout.executeAsync(graph.getDefaultParent()).then(function() {
- *   console.log('Layout complete');
- * });
- * (end)
+ * Requires drawio-elk.min.js to be loaded first (it provides
+ * globalThis.ELK, ElkAdapter, ElkApplier).
+ *
+ * Usage (unchanged from the original):
+ *
+ *   var layout = new mxElkLayout(graph, options);
+ *   layout.algorithm = 'layered';
+ *   layout.direction = 'DOWN';
+ *   var elkGraph = layout.buildElkGraph(parent);
+ *   // optional: mutate elkGraph (e.g. pin layerConstraint=FIRST / LAST)
+ *   new ELK().layout(elkGraph).then(function(result) {
+ *     model.beginUpdate();
+ *     try { layout.applyElkLayout(result); }
+ *     finally { model.endUpdate(); }
+ *   });
  */
 function mxElkLayout(graph, options)
 {
 	mxGraphLayout.call(this, graph);
 	this.options = options || {};
-};
+}
 
-/**
- * Extends mxGraphLayout.
- */
 mxElkLayout.prototype = new mxGraphLayout();
 mxElkLayout.prototype.constructor = mxElkLayout;
 
-/**
- * Variable: algorithm
- *
- * ELK algorithm to use. Default is 'layered'.
- * Options: layered, mrtree, radial, force, stress, disco, rectpacking, sporeOverlap
- */
+// Defaults preserved from the original flat adapter so shared.js can
+// override imperatively (`layout.algorithm = 'mrtree'`, etc.).
 mxElkLayout.prototype.algorithm = 'layered';
-
-/**
- * Variable: direction
- *
- * Layout direction. Default is 'DOWN'.
- * Options: DOWN, UP, RIGHT, LEFT (not all algorithms support this)
- */
 mxElkLayout.prototype.direction = 'DOWN';
-
-/**
- * Variable: nodeSpacing
- *
- * Minimum spacing between nodes. Default is 20.
- */
 mxElkLayout.prototype.nodeSpacing = 20;
-
-/**
- * Variable: rankSpacing
- *
- * Spacing between layers/ranks (layered algorithm). Default is 50.
- */
 mxElkLayout.prototype.rankSpacing = 50;
-
-/**
- * Variable: edgeSpacing
- *
- * Spacing between parallel edges. Default is 10.
- */
 mxElkLayout.prototype.edgeSpacing = 10;
-
-/**
- * Variable: edgeRouting
- *
- * Edge routing strategy for layered algorithm. Default is 'ORTHOGONAL'.
- * Options: UNDEFINED, POLYLINE, ORTHOGONAL, SPLINES
- */
 mxElkLayout.prototype.edgeRouting = 'ORTHOGONAL';
-
-/**
- * Variable: resetEdges
- *
- * Whether to reset edge control points before layout. Default is true.
- */
 mxElkLayout.prototype.resetEdges = true;
 
-/**
- * Function: buildElkGraph
- *
- * Converts the mxGraph cells under <parent> into an ELK JSON graph structure.
- */
+// ─── Internal helpers ────────────────────────────────────────────
+
+// ElkAdapter emits ELK node ids as 'n' + cell.id and edge ids as
+// 'e' + cell.id to keep node / edge namespaces distinct. shared.js's
+// start/end-node pinning compares ELK ids against raw mxGraph cell
+// ids, so the shim strips the leading 'n'/'e' from the elkGraph the
+// adapter produces and rebuilds the elkToCellMap with unprefixed
+// keys. The applier reads from that re-keyed map, so the round trip
+// works.
+function _stripPrefix(id) { return id != null ? id.replace(/^[ne]/, '') : id; }
+
+function _renameTree(node)
+{
+	if (node.id != null) node.id = _stripPrefix(node.id);
+
+	if (node.children)
+	{
+		for (var i = 0; i < node.children.length; i++) _renameTree(node.children[i]);
+	}
+
+	if (node.edges)
+	{
+		for (var j = 0; j < node.edges.length; j++)
+		{
+			var edge = node.edges[j];
+			edge.id = _stripPrefix(edge.id);
+
+			if (edge.sources)
+			{
+				for (var s = 0; s < edge.sources.length; s++) edge.sources[s] = _stripPrefix(edge.sources[s]);
+			}
+
+			if (edge.targets)
+			{
+				for (var t = 0; t < edge.targets.length; t++) edge.targets[t] = _stripPrefix(edge.targets[t]);
+			}
+		}
+	}
+}
+
+// ─── buildElkGraph ───────────────────────────────────────────────
+
 mxElkLayout.prototype.buildElkGraph = function(parent)
 {
-	var graph = this.graph;
-	var model = graph.getModel();
-	var vertices = graph.getChildCells(parent, true, false);
-	var edges = graph.getChildCells(parent, false, true);
-
-	var elkNodes = [];
-	var nodeIds = {};
-	var scale = graph.view.scale;
-
-	for (var i = 0; i < vertices.length; i++)
+	if (typeof ElkAdapter === 'undefined')
 	{
-		var cell = vertices[i];
-
-		if (this.isVertexIgnored(cell)) continue;
-
-		var geo = model.getGeometry(cell);
-		if (geo == null) continue;
-
-		// Skip edge labels — they are vertices with relative geometry attached
-		// to an edge, not standalone nodes, and must not appear as ELK nodes.
-		if (geo.relative) continue;
-
-		// Skip invisible cells.
-		if (!graph.isCellVisible(cell)) continue;
-
-		// Use the view state for dimensions so that auto-resizing containers
-		// (swimlanes, groups) report their actual rendered size to ELK.
-		var state = graph.view.getState(cell);
-		var w = state != null ? state.width / scale : (geo.width || 120);
-		var h = state != null ? state.height / scale : (geo.height || 60);
-
-		// Non-moveable (locked) cells are included so ELK routes around them,
-		// but flagged with a fixed position constraint so ELK does not move them.
-		var elkNode = {
-			id: cell.id,
-			width: Math.max(1, w),
-			height: Math.max(1, h)
-		};
-
-		if (!graph.isCellMovable(cell))
-		{
-			elkNode.x = geo.x || 0;
-			elkNode.y = geo.y || 0;
-			elkNode.layoutOptions = {'elk.position': '(' + (geo.x || 0) + ',' + (geo.y || 0) + ')',
-				'elk.nodeConstraint': 'FIXED_POS'};
-		}
-
-		elkNodes.push(elkNode);
-		nodeIds[cell.id] = true;
+		throw new Error('ElkAdapter not available. Load drawio-elk.min.js before mxElkLayout.js.');
 	}
 
-	// Returns the id of the nearest ancestor of cell that is an ELK node.
-	// This maps edges whose terminals are cells inside a group to the group itself,
-	// so grouped cells are treated as a single unit by ELK.
-	var elkAncestorId = function(cell)
-	{
-		var c = cell;
-		while (c != null)
-		{
-			if (nodeIds[c.id]) return c.id;
-			c = model.getParent(c);
-		}
-		return null;
-	};
+	var adapter = new ElkAdapter(this.graph);
 
-	var elkEdges = [];
+	// Two behaviours the old flat adapter had — keep them on by default.
+	// The bridge defaults are already `true`, so this is belt-and-braces.
+	adapter.useViewStateSizing = true;
+	adapter.respectFixedPosition = true;
 
-	for (var i = 0; i < edges.length; i++)
-	{
-		var edge = edges[i];
-		var source = model.getTerminal(edge, true);
-		var target = model.getTerminal(edge, false);
-
-		if (source == null || target == null) continue;
-
-		var srcId = elkAncestorId(source);
-		var tgtId = elkAncestorId(target);
-
-		if (srcId == null || tgtId == null) continue;
-		if (srcId === tgtId) continue; // internal edge within the same group
-
-		elkEdges.push({
-			id: edge.id,
-			sources: [srcId],
-			targets: [tgtId]
-		});
-	}
-
-	// Build layout options, merging defaults with user-supplied options
+	// Layout options: same defaults the old adapter had + caller overrides
+	// from `this.options`. shared.js sets every option it cares about via
+	// `this.options` (the second constructor arg), so per-instance
+	// properties like `this.nodeSpacing` only fire when the caller mutated
+	// them imperatively.
 	var layoutOptions = {
 		'elk.algorithm': this.algorithm,
 		'elk.direction': this.direction,
@@ -192,178 +125,70 @@ mxElkLayout.prototype.buildElkGraph = function(parent)
 		'elk.force.iterations': '300'
 	};
 
-	for (var key in this.options)
-	{
-		layoutOptions[key] = this.options[key];
-	}
+	for (var key in this.options) layoutOptions[key] = this.options[key];
 
-	return {
-		id: 'root',
-		layoutOptions: layoutOptions,
-		children: elkNodes,
-		edges: elkEdges
-	};
+	var elkGraph = adapter.convert(parent, layoutOptions);
+
+	// Strip 'n'/'e' prefix from every node / edge id in the tree and
+	// rebuild elkToCellMap with unprefixed keys so shared.js's pinning
+	// (which uses raw cell ids) and the applier (which looks up by
+	// stripped id) both work.
+	_renameTree(elkGraph);
+
+	var origMap = adapter.getElkToCellMap();
+	var rawMap = {};
+	for (var k in origMap) rawMap[_stripPrefix(k)] = origMap[k];
+
+	this._adapter = adapter;
+	this._elkToCellMap = rawMap;
+	this._portCells = adapter.getPortCells();
+	this._reversedEdges = adapter.getReversedEdges();
+
+	return elkGraph;
 };
 
-/**
- * Function: applyElkLayout
- *
- * Applies ELK layout results (node positions) back to the mxGraph model.
- * Must be called inside a model.beginUpdate/endUpdate block.
- */
+// ─── applyElkLayout ──────────────────────────────────────────────
+
 mxElkLayout.prototype.applyElkLayout = function(elkGraph)
 {
-	var graph = this.graph;
-	var model = graph.getModel();
-
-	if (!elkGraph.children) return;
-
-	// Build a lookup of ELK node results (needed to normalize connection points)
-	var elkNodeMap = {};
-
-	for (var i = 0; i < elkGraph.children.length; i++)
+	if (typeof ElkApplier === 'undefined')
 	{
-		var elkNode = elkGraph.children[i];
-		var cell = model.getCell(elkNode.id);
-
-		if (cell == null) continue;
-
-		var geo = model.getGeometry(cell);
-		if (geo == null) continue;
-
-		elkNodeMap[elkNode.id] = elkNode;
-
-		// Do not reposition locked cells — ELK was told their position is fixed.
-		if (!graph.isCellMovable(cell)) continue;
-
-		geo = geo.clone();
-		geo.x = elkNode.x || 0;
-		geo.y = elkNode.y || 0;
-		model.setGeometry(cell, geo);
+		throw new Error('ElkApplier not available. Load drawio-elk.min.js before mxElkLayout.js.');
 	}
 
-	// Apply ELK edge routing: bend points + connection points from sections
-	if (this.resetEdges && elkGraph.edges)
+	if (this._adapter == null)
 	{
-		for (var i = 0; i < elkGraph.edges.length; i++)
+		throw new Error('applyElkLayout called before buildElkGraph.');
+	}
+
+	var applier = new ElkApplier(this.graph,
+		this._elkToCellMap,
+		this._portCells,
 		{
-			var elkEdge = elkGraph.edges[i];
-			var edgeCell = model.getCell(elkEdge.id);
+			reversedEdges: this._reversedEdges,
+			// Preserve drawio-mcp's old behaviour: don't resize parents,
+			// don't try to be clever about edge styles. The applier writes
+			// waypoints + exit/entry styles, which is what shared.js wants.
+			resizeParent: false
+		});
 
-			if (edgeCell == null) continue;
-
-			var geo = model.getGeometry(edgeCell);
-			if (geo == null) continue;
-
-			geo = geo.clone();
-
-			// Collect bend points and capture section start/end points
-			var points = [];
-			var startPoint = null;
-			var endPoint = null;
-
-			if (elkEdge.sections && elkEdge.sections.length > 0)
-			{
-				startPoint = elkEdge.sections[0].startPoint;
-				endPoint = elkEdge.sections[elkEdge.sections.length - 1].endPoint;
-
-				for (var s = 0; s < elkEdge.sections.length; s++)
-				{
-					var section = elkEdge.sections[s];
-
-					if (section.bendPoints)
-					{
-						for (var b = 0; b < section.bendPoints.length; b++)
-						{
-							var bp = section.bendPoints[b];
-							points.push(new mxPoint(bp.x, bp.y));
-						}
-					}
-				}
-			}
-
-			geo.points = points.length > 0 ? points : null;
-			model.setGeometry(edgeCell, geo);
-
-			var style = model.getStyle(edgeCell) || '';
-
-			// Disable automatic re-routing so mxGraph draws straight segments through
-			// ELK's computed bend points. Setting null only removes the key from the
-			// inline style; if the base/named style also defines edgeStyle, mxGraph would
-			// still re-route. Using an empty string explicitly overrides the base style.
-			style = mxUtils.setStyle(style, 'edgeStyle', '');
-
-			// Set connection points from ELK section start/end normalized to node bounds.
-			// Use enough decimal precision so the exit/entry point aligns exactly with
-			// the first/last bend point — avoiding the minor diagonal shift that rounding
-			// to 2 decimal places would introduce.
-			var srcNode = elkEdge.sources && elkNodeMap[elkEdge.sources[0]];
-
-			if (startPoint && srcNode && srcNode.width > 0 && srcNode.height > 0)
-			{
-				// Clamp to [0,1] — ELK can place a point fractionally outside the node
-				// boundary due to floating-point, which would produce an invalid constraint.
-				style = mxUtils.setStyle(style, 'exitX',
-					Math.min(1, Math.max(0, Math.round((startPoint.x - srcNode.x) / srcNode.width * 10000) / 10000)));
-				style = mxUtils.setStyle(style, 'exitY',
-					Math.min(1, Math.max(0, Math.round((startPoint.y - srcNode.y) / srcNode.height * 10000) / 10000)));
-			}
-			else
-			{
-				style = mxUtils.setStyle(style, 'exitX', null);
-				style = mxUtils.setStyle(style, 'exitY', null);
-			}
-
-			style = mxUtils.setStyle(style, 'exitDx', null);
-			style = mxUtils.setStyle(style, 'exitDy', null);
-
-			var tgtNode = elkEdge.targets && elkNodeMap[elkEdge.targets[0]];
-
-			if (endPoint && tgtNode && tgtNode.width > 0 && tgtNode.height > 0)
-			{
-				style = mxUtils.setStyle(style, 'entryX',
-					Math.min(1, Math.max(0, Math.round((endPoint.x - tgtNode.x) / tgtNode.width * 10000) / 10000)));
-				style = mxUtils.setStyle(style, 'entryY',
-					Math.min(1, Math.max(0, Math.round((endPoint.y - tgtNode.y) / tgtNode.height * 10000) / 10000)));
-			}
-			else
-			{
-				style = mxUtils.setStyle(style, 'entryX', null);
-				style = mxUtils.setStyle(style, 'entryY', null);
-			}
-
-			style = mxUtils.setStyle(style, 'entryDx', null);
-			style = mxUtils.setStyle(style, 'entryDy', null);
-
-			model.setStyle(edgeCell, style);
-		}
-	}
+	applier.apply(elkGraph);
 };
 
-/**
- * Function: executeAsync
- *
- * Performs the ELK layout asynchronously. Returns a Promise that resolves
- * when the layout has been applied to the graph model.
- *
- * Parameters:
- *
- * parent - <mxCell> whose children should be laid out.
- */
+// ─── executeAsync / execute (unchanged from the original) ───────
+
 mxElkLayout.prototype.executeAsync = function(parent)
 {
 	if (typeof ELK === 'undefined')
 	{
-		return Promise.reject(new Error('ELK library not loaded. Include elk.bundled.js before mxElkLayout.js.'));
+		return Promise.reject(new Error('ELK library not loaded. Include drawio-elk.min.js before mxElkLayout.js.'));
 	}
 
 	var self = this;
 	var model = this.graph.getModel();
-
-	// Snapshot the graph structure synchronously before the async call
 	var elkGraph = this.buildElkGraph(parent);
 
-	if (elkGraph.children.length === 0)
+	if (elkGraph.children == null || elkGraph.children.length === 0)
 	{
 		return Promise.resolve();
 	}
@@ -371,39 +196,16 @@ mxElkLayout.prototype.executeAsync = function(parent)
 	return new ELK().layout(elkGraph).then(function(result)
 	{
 		model.beginUpdate();
-		try
-		{
-			self.applyElkLayout(result);
-		}
-		finally
-		{
-			model.endUpdate();
-		}
+		try { self.applyElkLayout(result); }
+		finally { model.endUpdate(); }
 	});
 };
 
-/**
- * Function: execute
- *
- * Implements <mxGraphLayout.execute>. Starts the async ELK layout.
- * The layout is applied asynchronously after this call returns.
- * Use executeAsync() directly if you need Promise-based control flow.
- *
- * Parameters:
- *
- * parent - <mxCell> whose children should be laid out.
- */
 mxElkLayout.prototype.execute = function(parent)
 {
 	this.executeAsync(parent).catch(function(err)
 	{
-		if (typeof mxLog !== 'undefined')
-		{
-			mxLog.warn('mxElkLayout error: ' + err.message);
-		}
-		else
-		{
-			console.warn('mxElkLayout error:', err);
-		}
+		if (typeof mxLog !== 'undefined') mxLog.warn('mxElkLayout error: ' + err.message);
+		else console.warn('mxElkLayout error:', err);
 	});
 };
