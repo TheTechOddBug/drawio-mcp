@@ -88,7 +88,7 @@ drawio   # typically on PATH via snap/apt/flatpak
 "C:\Program Files\draw.io\draw.io.exe"
 ```
 
-Use `which drawio` (or `where drawio` on Windows) to check if it's on PATH before falling back to the platform-specific path.
+Use `which drawio` (or `where draw.io` on Windows) to check if it's on PATH before falling back to the platform-specific path.
 
 ### Export command
 
