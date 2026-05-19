@@ -33,7 +33,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
 <html lang="en">
   <head>
     <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
     <base href="https://app.diagrams.net/" />
     <title>draw.io Diagram</title>
     <link rel="icon" href="/favicon.png" type="image/png" />
@@ -154,17 +154,37 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         height: 100% !important;
         overflow: hidden !important;
       }
-      /* Custom viewer mode: mouse-drag pans the diagram. Wheel + pinch
-         intentionally NOT handled — they bubble to the parent so the
-         chat page scrolls/zooms naturally over the diagram (touch-action
-         defaults to auto). user-select disabled so a pan-drag doesn't
-         leave a text-selection trail behind. */
+      /* Custom viewer mode: mouse-drag pans, wheel + ctrl-wheel zooms.
+         Touch: 1-finger pan in fullscreen, 2-finger pinch+pan in either
+         mode. touch-action: pan-y in inline lets a 1-finger swipe reach
+         the chat scroller while telling the browser it cannot claim
+         pinch for page zoom — without this, iOS WebKit intercepts the
+         second touchpoint mid-gesture and fires touchcancel on us.
+         user-select disabled so a pan-drag doesn't leave a text-
+         selection trail behind. */
       #diagram-container.custom-viewer {
         cursor: grab;
         user-select: none;
         -webkit-user-select: none;
+        touch-action: pan-y;
+      }
+      body.fullscreen #diagram-container.custom-viewer {
+        touch-action: none;
       }
       #diagram-container.custom-viewer.dragging { cursor: grabbing; }
+      /* When the user pans or zooms past the original SVG bbox, the
+         CSS transform paints content outside the SVG's intrinsic box
+         and outside the .mxgraph wrappers — the default overflow:hidden
+         on those wrappers (set above to suppress horizontal scrollbars
+         on oversized SVGs) clips the visible result and gives the
+         truncated cell labels visible on mobile pan. Same trick as
+         .morph-active: loosen overflow everywhere inside, but keep
+         #diagram-container itself clipping so spillover doesn't bleed
+         past the card edge. */
+      #diagram-container.custom-viewer * {
+        overflow: visible !important;
+        max-width: none !important;
+      }
       /* GraphViewer sets inline width on its wrappers based on the
          diagram's natural width, which can exceed the iframe width and
          create a horizontal scrollbar between the SVG and the toolbar.
@@ -4292,6 +4312,180 @@ function enableViewerInteractivity(graph)
     var k = Math.abs(e.deltaY) < 50 ? 0.010 : 0.0015;
     customZoomAt(px, py, Math.exp(-e.deltaY * k));
   }, { passive: false });
+
+  // Touch gestures. Mouse stays on the pointer-event handlers above —
+  // those ignore non-mouse pointers so all touch input is owned here.
+  //   Inline + 1 finger:  passthrough — chat scrolls normally.
+  //   Inline + 2 fingers: claim — pinch zoom + pan the diagram.
+  //   Fullscreen + 1:     pan.
+  //   Fullscreen + 2:     pinch zoom + pan.
+  // preventDefault() is only called once a gesture is claimed, so a
+  // 1-finger touch in inline mode reaches the parent scroller. Once
+  // claimed, every subsequent touchmove keeps preventing default until
+  // the last finger lifts — so raising one finger of a two-finger
+  // pinch never falls through to a surprise page scroll.
+  var touchPan = null;     // { sx, sy, sscale, stx, sty }
+  var touchPinch = null;   // { startDist, startMidX, startMidY, startScale, startTx, startTy }
+  var touchClaimed = false;
+
+  function touchPointsRel(touchList)
+  {
+    var rect = containerEl.getBoundingClientRect();
+    var arr = [];
+    for (var i = 0; i < touchList.length; i++)
+    {
+      arr.push({
+        x: touchList[i].clientX - rect.left,
+        y: touchList[i].clientY - rect.top
+      });
+    }
+    return arr;
+  }
+
+  function startPinch(touches)
+  {
+    var pts = touchPointsRel(touches);
+    var dx = pts[1].x - pts[0].x;
+    var dy = pts[1].y - pts[0].y;
+    touchPinch = {
+      startDist: Math.max(1, Math.hypot(dx, dy)),
+      startMidX: (pts[0].x + pts[1].x) / 2,
+      startMidY: (pts[0].y + pts[1].y) / 2,
+      startScale: viewTransform.scale,
+      startTx: viewTransform.tx,
+      startTy: viewTransform.ty
+    };
+  }
+
+  function startPan(touch)
+  {
+    touchPan = {
+      sx: touch.clientX,
+      sy: touch.clientY,
+      sscale: viewTransform.scale,
+      stx: viewTransform.tx,
+      sty: viewTransform.ty
+    };
+  }
+
+  containerEl.addEventListener('touchstart', function(e)
+  {
+    var fullscreen = currentDisplayMode === 'fullscreen';
+
+    // Cancel any in-flight rAF camera animation on ANY touchstart,
+    // even ones we won't claim. Without this, a still-running anim
+    // (e.g. the post-streaming fit-settle or a recent toolbar zoom)
+    // keeps painting while the browser claims the gesture for chat
+    // scroll — visible as the viewer "panning a short distance" at
+    // the start of an inline drag.
+    cancelZoomAnim();
+
+    if (e.touches.length >= 2)
+    {
+      e.preventDefault();
+      touchClaimed = true;
+      touchPan = null;
+      startPinch(e.touches);
+    }
+    else if (e.touches.length === 1 && fullscreen)
+    {
+      e.preventDefault();
+      touchClaimed = true;
+      startPan(e.touches[0]);
+    }
+  }, { passive: false });
+
+  containerEl.addEventListener('touchmove', function(e)
+  {
+    if (!touchClaimed) return;
+    e.preventDefault();
+
+    if (touchPinch != null && e.touches.length >= 2)
+    {
+      var pts = touchPointsRel(e.touches);
+      var dx = pts[1].x - pts[0].x;
+      var dy = pts[1].y - pts[0].y;
+      var dist = Math.max(1, Math.hypot(dx, dy));
+      var midX = (pts[0].x + pts[1].x) / 2;
+      var midY = (pts[0].y + pts[1].y) / 2;
+
+      var newScale = Math.max(0.05, Math.min(4,
+        touchPinch.startScale * (dist / touchPinch.startDist)));
+
+      // Keep the model point that was under the start midpoint
+      // anchored under the current midpoint — same invariant as
+      // customZoomAt, but with a moving anchor.
+      var modelX = touchPinch.startMidX / touchPinch.startScale - touchPinch.startTx;
+      var modelY = touchPinch.startMidY / touchPinch.startScale - touchPinch.startTy;
+      var newTx = midX / newScale - modelX;
+      var newTy = midY / newScale - modelY;
+
+      var c = clampPan(newScale, newTx, newTy);
+      applyViewTransform(graph, newScale, c.tx, c.ty, true);
+    }
+    else if (e.touches.length === 1
+             && currentDisplayMode === 'fullscreen')
+    {
+      // Lazy rebase: if a pinch just ended (touchPan was nulled in
+      // endTouch on the 2→1 transition), we capture the baseline
+      // HERE using this touchmove's own clientX/Y. iOS reports
+      // slightly different clientX/Y for the same finger between
+      // a touchend and the next touchmove (event coalescing /
+      // retiming), so eagerly capturing in endTouch produces a
+      // small offset jump on the first pan frame. Capturing here
+      // makes the first frame's ddx/ddy exactly zero by construction.
+      if (touchPan == null)
+      {
+        startPan(e.touches[0]);
+        return;
+      }
+      var t = e.touches[0];
+      var ddx = (t.clientX - touchPan.sx) / touchPan.sscale;
+      var ddy = (t.clientY - touchPan.sy) / touchPan.sscale;
+      var c2 = clampPan(touchPan.sscale,
+        touchPan.stx + ddx, touchPan.sty + ddy);
+      applyViewTransform(graph, touchPan.sscale, c2.tx, c2.ty, true);
+    }
+  }, { passive: false });
+
+  function endTouch(e)
+  {
+    if (e.touches.length === 0)
+    {
+      touchPan = null;
+      touchPinch = null;
+      touchClaimed = false;
+    }
+    else if (e.touches.length === 1 && touchPinch != null)
+    {
+      // Lifted one of two fingers. End the pinch and drop the pan
+      // baseline — the next touchmove will lazily rebaseline using
+      // its own event coordinates (see touchmove handler), avoiding
+      // the iOS touchend↔touchmove clientX/Y skew.
+      touchPinch = null;
+      touchPan = null;
+    }
+  }
+
+  containerEl.addEventListener('touchend', endTouch);
+  containerEl.addEventListener('touchcancel', endTouch);
+
+  // iOS Safari / WKWebView fires non-standard gesture events alongside
+  // touch events when it detects a two-finger gesture. Once WebKit
+  // decides the gesture is "page pinch zoom", it fires touchcancel on
+  // our touchmoves — the user reports this as "pinch starts and then
+  // immediately stops". Preventing the gesture events keeps the touch
+  // stream alive so our touch handlers can do the math.
+  ['gesturestart', 'gesturechange', 'gestureend'].forEach(function(name)
+  {
+    containerEl.addEventListener(name, function(e)
+    {
+      if (currentDisplayMode === 'fullscreen' || touchClaimed)
+      {
+        e.preventDefault();
+      }
+    }, { passive: false });
+  });
 }
 
 /**
