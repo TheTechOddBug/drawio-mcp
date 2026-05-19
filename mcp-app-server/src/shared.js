@@ -34,9 +34,8 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1, user-scalable=no" />
-    <base href="https://app.diagrams.net/" />
     <title>draw.io Diagram</title>
-    <link rel="icon" href="/favicon.png" type="image/png" />
+    <link rel="icon" href="https://app.diagrams.net/favicon.png" type="image/png" />
     <style>
       * { margin: 0; padding: 0; box-sizing: border-box; }
 
