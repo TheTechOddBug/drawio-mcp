@@ -775,6 +775,29 @@ function isMermaidHorizontalFlowchart(text)
 }
 
 /**
+ * Translates the public postLayout value (+ optional direction) into the
+ * internal layered-flow algorithm string. The only supported value is "elk"
+ * (ELK layered flow); its direction is, for Mermaid, taken from the flowchart
+ * code (TD/TB vs LR/RL) so the on-screen layout always matches what the
+ * round-trip ELK directive reproduces; for XML it comes from the optional
+ * direction field (default vertical, since XML carries no inherent direction).
+ * Returns null when postLayout is anything else (including unset).
+ *
+ * @param {string|null} postLayout  - "elk" (or null)
+ * @param {string|null} direction   - "vertical" | "horizontal" (XML only)
+ * @param {string|null} mermaidText - the Mermaid source, or null for XML
+ */
+function resolvePostLayout(postLayout, direction, mermaidText)
+{
+  if (postLayout !== 'elk') return null;
+
+  var horizontal = (mermaidText != null)
+    ? isMermaidHorizontalFlowchart(mermaidText)
+    : (direction === 'horizontal');
+  return horizontal ? 'horizontalFlow' : 'verticalFlow';
+}
+
+/**
  * 32-bit FNV-1a hash, hex string. Stable across runs and across browsers.
  * Used to derive content-addressed cell IDs.
  */
@@ -966,6 +989,10 @@ const copyXmlBtn     = document.getElementById("copy-xml-btn");
 const layoutBtn      = document.getElementById("layout-btn");
 var drawioEditUrl = null;
 var currentXml = null;
+// Mermaid source backing the current diagram (null for plain-XML diagrams).
+// Set whenever a Mermaid conversion runs; consumed by commitDiagramXml to
+// wrap the export XML so the source round-trips when reopened in the editor.
+var currentMermaidText = null;
 var invalidDiagramXmlMessage = ${JSON.stringify(INVALID_DIAGRAM_XML_MESSAGE)};
 
 // --- State ---
@@ -1164,6 +1191,7 @@ function rememberMermaidConversion(text, xml)
 {
   lastConvertedMermaidText = text;
   lastConvertedMermaidXml = xml;
+  currentMermaidText = text;
 }
 
 function convertMermaidToXml(mermaidText)
@@ -1220,6 +1248,64 @@ function generateDrawioEditUrl(xml)
   var createObj = { type: "xml", compressed: true, data: base64, effect: "pop" };
 
   return "https://app.diagrams.net/?pv=0&grid=0#create=" + encodeURIComponent(JSON.stringify(createObj));
+}
+
+// The init directive that switches Mermaid's flowchart renderer to ELK.
+// Prepended to the round-tripped source whenever the viewer is showing a
+// layered ELK layout, so drawio-dev's isMermaidElkFlowchart() trigger fires
+// and re-renders through its ElkLayout post-pass instead of the dagre default.
+var ELK_RENDERER_DIRECTIVE = '%%{init: {"flowchart": {"defaultRenderer": "elk"}} }%%';
+
+// Prepend the ELK renderer directive unless the source already declares a
+// renderer (respect an explicit choice; never inject a second init block).
+function withElkRenderer(text)
+{
+  if (text == null || /defaultRenderer/i.test(text)) return text;
+  return ELK_RENDERER_DIRECTIVE + '\\n' + text;
+}
+
+/**
+ * Sets the authoritative diagram XML behind "Open in draw.io" and the
+ * "Copy XML" button. Mermaid-derived diagrams are wrapped via the bundle's
+ * mxMermaidToDrawio.wrapGroup (same code path drawio-dev uses) so the source
+ * round-trips on reopen; plain-XML diagrams (currentMermaidText == null) are
+ * stored verbatim. The live streamGraph preview is intentionally left
+ * unwrapped so the ELK post-layout pass keeps operating on the flat cells.
+ *
+ * When the viewer is currently showing a layered ELK layout (currentLayoutState
+ * is 'vertical' / 'horizontal' — set by an explicit verticalFlow/horizontalFlow
+ * postLayout or the layout-toggle button), the stored Mermaid source gets the
+ * ELK renderer directive (%%{init: {"flowchart": {"defaultRenderer": "elk"}}}%%)
+ * so a re-edit in draw.io re-runs through ELK — drawio-dev already applies its
+ * ElkLayout post-pass to elk-flowchart sources. Start/end pins are deliberately
+ * NOT carried in the config: Mermaid's ELK renderer accepts no such hints, and
+ * the baked geometry already round-trips on plain open/copy, so passing cell IDs
+ * in metadata would only add a fragile coupling for no layout gain.
+ */
+function commitDiagramXml(xml)
+{
+  var out = xml;
+
+  if (currentMermaidText != null &&
+      typeof mxMermaidToDrawio !== 'undefined' &&
+      typeof mxMermaidToDrawio.wrapGroup === 'function')
+  {
+    var elkLive = (currentLayoutState === 'vertical' ||
+                   currentLayoutState === 'horizontal');
+    var wrapText = elkLive ? withElkRenderer(currentMermaidText) : currentMermaidText;
+
+    try
+    {
+      out = mxMermaidToDrawio.wrapGroup(xml, wrapText, null);
+    }
+    catch (e)
+    {
+      out = xml;
+    }
+  }
+
+  currentXml = out;
+  drawioEditUrl = generateDrawioEditUrl(out);
 }
 
 /**
@@ -1335,9 +1421,6 @@ function createPostLayout(graph, algorithm)
  *
  * @param {Graph} graph
  * @param {string} algorithm - Enum value from the postLayout schema.
- * @param {object} [hints] - Optional layout hints.
- * @param {string[]} [hints.startNodeIds] - Cell IDs pinned to the first layer.
- * @param {string[]} [hints.endNodeIds]   - Cell IDs pinned to the last layer.
  * @param {function(boolean)} [onDone] - Called with true when the
  *   layout was applied, false when it was skipped or ELK errored.
  */
@@ -1392,17 +1475,8 @@ function normalizeEdgesToRounded(graph)
 
 }
 
-function applyPostLayout(graph, algorithm, hints, onDone, onMorphStart, awaitBeforeMorph, fadeEdges)
+function applyPostLayout(graph, algorithm, onDone, onMorphStart, awaitBeforeMorph, fadeEdges)
 {
-  // Backwards-compatible arg shuffle: allow applyPostLayout(graph, alg, cb).
-  if (typeof hints === 'function')
-  {
-    onDone = hints;
-    hints = null;
-  }
-
-  hints = hints || {};
-
   var done = function(applied)
   {
     if (typeof onDone === 'function') onDone(applied);
@@ -1447,95 +1521,6 @@ function applyPostLayout(graph, algorithm, hints, onDone, onMorphStart, awaitBef
       && typeof ElkLayout.extractIsolatedTopLevel === 'function')
   {
     isolatedNodes = ElkLayout.extractIsolatedTopLevel(elkGraph) || [];
-  }
-
-  // For layered layouts (verticalFlow / horizontalFlow), pin Start/End
-  // nodes to the first/last layer. When the LLM gave explicit ID lists
-  // via startNodeIds / endNodeIds, use those verbatim — they reflect
-  // intent. Otherwise fall back to topological detection (sources =
-  // nodes with 0 incoming edges → FIRST, sinks = 0 outgoing → LAST),
-  // which handles well-formed acyclic flows but mispicks when a
-  // feedback edge (e.g. error → retry) makes a mid-graph node look
-  // like a source.
-  if (layout.algorithm === 'layered')
-  {
-    var firstIds = null;
-    var lastIds = null;
-
-    if (Array.isArray(hints.startNodeIds) && hints.startNodeIds.length > 0)
-    {
-      firstIds = {};
-      for (var i = 0; i < hints.startNodeIds.length; i++) firstIds[hints.startNodeIds[i]] = true;
-    }
-
-    if (Array.isArray(hints.endNodeIds) && hints.endNodeIds.length > 0)
-    {
-      lastIds = {};
-      for (var i = 0; i < hints.endNodeIds.length; i++) lastIds[hints.endNodeIds[i]] = true;
-    }
-
-    if (firstIds == null && lastIds == null)
-    {
-      // Fallback: topological source/sink detection.
-      var incomingCount = {};
-      var outgoingCount = {};
-
-      for (var i = 0; i < elkGraph.children.length; i++)
-      {
-        incomingCount[elkGraph.children[i].id] = 0;
-        outgoingCount[elkGraph.children[i].id] = 0;
-      }
-
-      if (elkGraph.edges != null)
-      {
-        for (var i = 0; i < elkGraph.edges.length; i++)
-        {
-          var edge = elkGraph.edges[i];
-
-          if (edge.sources != null)
-          {
-            for (var s = 0; s < edge.sources.length; s++)
-            {
-              if (outgoingCount[edge.sources[s]] != null) outgoingCount[edge.sources[s]]++;
-            }
-          }
-
-          if (edge.targets != null)
-          {
-            for (var t = 0; t < edge.targets.length; t++)
-            {
-              if (incomingCount[edge.targets[t]] != null) incomingCount[edge.targets[t]]++;
-            }
-          }
-        }
-      }
-
-      firstIds = {};
-      lastIds = {};
-
-      for (var i = 0; i < elkGraph.children.length; i++)
-      {
-        var nid = elkGraph.children[i].id;
-        if (incomingCount[nid] === 0 && outgoingCount[nid] > 0) firstIds[nid] = true;
-        else if (outgoingCount[nid] === 0 && incomingCount[nid] > 0) lastIds[nid] = true;
-      }
-    }
-
-    for (var i = 0; i < elkGraph.children.length; i++)
-    {
-      var node = elkGraph.children[i];
-
-      if (firstIds != null && firstIds[node.id])
-      {
-        if (node.layoutOptions == null) node.layoutOptions = {};
-        node.layoutOptions['elk.layered.layering.layerConstraint'] = 'FIRST';
-      }
-      else if (lastIds != null && lastIds[node.id])
-      {
-        if (node.layoutOptions == null) node.layoutOptions = {};
-        node.layoutOptions['elk.layered.layering.layerConstraint'] = 'LAST';
-      }
-    }
   }
 
   // ELK gates layout application; awaitBeforeMorph gates mxMorphing
@@ -3882,9 +3867,9 @@ function endStreaming()
   lastMergedMermaidText = null;
   lastConvertedMermaidText = null;
   lastConvertedMermaidXml = null;
+  currentMermaidText = null;
   originalCellGeometries = null;
   originalCellStyles = null;
-  lastLayoutHints = null;
   currentLayoutState = 'none';
   if (layoutBtn != null) layoutBtn.style.display = 'none';
   dblclickZoomedIn = false;
@@ -3978,8 +3963,7 @@ function finalizeStreamingView(xml, opts)
     return;
   }
 
-  currentXml = xml;
-  drawioEditUrl = generateDrawioEditUrl(xml);
+  commitDiagramXml(xml);
 
   // Reveal the toolbar BEFORE the final fit. The toolbar adds ~50 px
   // to the body, which the host then reflects back as a smaller
@@ -4006,10 +3990,6 @@ function finalizeStreamingView(xml, opts)
   if (showLayoutBtn)
   {
     captureOriginalCellGeometries(streamGraph);
-    lastLayoutHints = {
-      startNodeIds: opts.startNodeIds || null,
-      endNodeIds: opts.endNodeIds || null
-    };
     var isHorizontal = (opts.postLayout === 'horizontalFlow') || opts.isHorizontal === true;
     layoutAlternativeState = isHorizontal ? 'horizontal' : 'vertical';
     if (opts.postLayout === 'verticalFlow') currentLayoutState = 'vertical';
@@ -4074,12 +4054,11 @@ function finalizeStreamingView(xml, opts)
   // settle so the snapshot captures a fully-opaque view.
   if (opts.postLayout)
   {
-    var hints = { startNodeIds: opts.startNodeIds || null, endNodeIds: opts.endNodeIds || null };
     var awaitAnims = waitForPendingAnimationsToSettle();
 
     try
     {
-      applyPostLayout(streamGraph, opts.postLayout, hints, function(applied)
+      applyPostLayout(streamGraph, opts.postLayout, function(applied)
       {
         if (!applied) return;
 
@@ -4088,8 +4067,7 @@ function finalizeStreamingView(xml, opts)
           var newXml = serializeGraphXml(streamGraph);
           if (newXml != null)
           {
-            currentXml = newXml;
-            drawioEditUrl = generateDrawioEditUrl(newXml);
+            commitDiagramXml(newXml);
           }
         }
         catch (_) {}
@@ -4901,7 +4879,6 @@ var originalCellGeometries = null;
 // alone leaves edges drawn as right-angles when toggling back to "as
 // authored", so we capture styles too.
 var originalCellStyles = null;
-var lastLayoutHints = null;
 var currentLayoutState = 'none'; // 'none' | 'horizontal' | 'vertical'
 var layoutAlternativeState = 'vertical'; // 'horizontal' | 'vertical' for the current diagram
 
@@ -5019,8 +4996,7 @@ function applyLayoutChange(targetState)
           var newXml = serializeGraphXml(streamGraph);
           if (newXml != null)
           {
-            currentXml = newXml;
-            drawioEditUrl = generateDrawioEditUrl(newXml);
+            commitDiagramXml(newXml);
           }
         }
         catch (_) {}
@@ -5057,14 +5033,13 @@ function applyLayoutChange(targetState)
 
   // 'horizontal' or 'vertical' — run ELK with mxMorphing.
   var algorithm = (targetState === 'vertical') ? 'verticalFlow' : 'horizontalFlow';
-  var hints = lastLayoutHints || {};
   var prevState = currentLayoutState;
   currentLayoutState = targetState;
   updateLayoutButtonUi();
 
   try
   {
-    applyPostLayout(streamGraph, algorithm, hints,
+    applyPostLayout(streamGraph, algorithm,
       function(applied)
       {
         if (!applied)
@@ -5079,8 +5054,7 @@ function applyLayoutChange(targetState)
           var newXml = serializeGraphXml(streamGraph);
           if (newXml != null)
           {
-            currentXml = newXml;
-            drawioEditUrl = generateDrawioEditUrl(newXml);
+            commitDiagramXml(newXml);
           }
         }
         catch (_) {}
@@ -5364,7 +5338,7 @@ app.ontoolinputpartial = function(params)
   {
     handleMermaidPartial(partialMermaid);
 
-    // Once any sibling key (postLayout, startNodeIds, endNodeIds) appears
+    // Once any sibling key (e.g. postLayout) appears
     // in params.arguments, the JSON parser must have closed the mermaid
     // string — those keys come *after* mermaid in the schema, so they
     // can't surface until its closing quote was processed. That means
@@ -5389,13 +5363,12 @@ app.ontoolinputpartial = function(params)
       if (hasSibling)
       {
         mermaidEarlyFinalizeFired = true;
-        var earlyPostLayout = args.postLayout || null;
+        // Mermaid path: direction comes from the flowchart code, not args.direction.
+        var earlyPostLayout = resolvePostLayout(args.postLayout, args.direction, partialMermaid);
         var earlyOpts = {
           skipIntroAnim: true,
           fadeIn: true,
           postLayout: earlyPostLayout,
-          startNodeIds: args.startNodeIds || null,
-          endNodeIds: args.endNodeIds || null,
           replaceMode: true,
           isFlowchart: isMermaidFlowchart(partialMermaid),
           isHorizontal: isMermaidHorizontalFlowchart(partialMermaid)
@@ -5533,13 +5506,15 @@ app.ontoolinputpartial = function(params)
 app.ontoolinput = function(params)
 {
   var args = (params && params.arguments) || {};
-  var postLayout = args.postLayout || null;
-  var startNodeIds = args.startNodeIds || null;
-  var endNodeIds = args.endNodeIds || null;
-
   var mermaidText = args.mermaid;
 
-  var layoutOpts = { skipIntroAnim: true, fadeIn: true, postLayout: postLayout, startNodeIds: startNodeIds, endNodeIds: endNodeIds };
+  // For Mermaid, direction is derived from the flowchart code; for XML, from
+  // the optional direction field. resolvePostLayout maps elk to vertical or
+  // horizontalFlow accordingly and passes other algorithms through.
+  var postLayout = resolvePostLayout(args.postLayout, args.direction,
+    (typeof mermaidText === 'string') ? mermaidText : null);
+
+  var layoutOpts = { skipIntroAnim: true, fadeIn: true, postLayout: postLayout };
 
   if (mermaidText != null && typeof mermaidText === 'string')
   {
@@ -5573,6 +5548,9 @@ app.ontoolinput = function(params)
     return;
   }
 
+  // Plain-XML diagram: ensure no stale Mermaid source wraps the export.
+  currentMermaidText = null;
+
   try
   {
     finalizeStreamingView(xml, layoutOpts);
@@ -5604,13 +5582,12 @@ app.ontoolresult = function(result)
 
   if (textBlock && textBlock.type === "text")
   {
-    // Unified payload: {xml|mermaid, postLayout, startNodeIds, endNodeIds, _buildId} as JSON.
+    // Unified payload: {xml|mermaid, postLayout, direction (XML only), _buildId} as JSON.
     // Fall back to treating the raw text as XML if JSON parsing fails.
     var mermaidText = null;
     var xmlText = null;
     var postLayout = null;
-    var startNodeIds = null;
-    var endNodeIds = null;
+    var direction = null;
 
     try
     {
@@ -5620,15 +5597,12 @@ app.ontoolresult = function(result)
       {
         mermaidText = parsed.mermaid;
         postLayout = parsed.postLayout || null;
-        startNodeIds = parsed.startNodeIds || null;
-        endNodeIds = parsed.endNodeIds || null;
       }
       else if (parsed && typeof parsed.xml === 'string')
       {
         xmlText = parsed.xml;
         postLayout = parsed.postLayout || null;
-        startNodeIds = parsed.startNodeIds || null;
-        endNodeIds = parsed.endNodeIds || null;
+        direction = parsed.direction || null;
       }
     }
     catch (e)
@@ -5636,7 +5610,10 @@ app.ontoolresult = function(result)
       // Not JSON — treat the raw text as XML
     }
 
-    var layoutOpts = { skipIntroAnim: true, fadeIn: true, postLayout: postLayout, startNodeIds: startNodeIds, endNodeIds: endNodeIds };
+    // Mermaid: direction from the flowchart code; XML: from the direction field.
+    postLayout = resolvePostLayout(postLayout, direction, mermaidText);
+
+    var layoutOpts = { skipIntroAnim: true, fadeIn: true, postLayout: postLayout };
 
     if (mermaidText != null)
     {
@@ -5659,6 +5636,9 @@ app.ontoolresult = function(result)
     {
       var rawXml = xmlText != null ? xmlText : textBlock.text;
       var normalizedXml = normalizeDiagramXml(rawXml);
+
+      // Plain-XML diagram: ensure no stale Mermaid source wraps the export.
+      currentMermaidText = null;
 
       if (normalizedXml)
       {
@@ -6577,7 +6557,7 @@ export function createServer(html, options = {})
         "- **Any diagram requiring specific colors, fonts, stencils, or layouts** that Mermaid can't control precisely\n" +
         "Call `search_shapes` first when you need industry icons (AWS / Azure / Cisco / P&ID / Kubernetes / floorplan / mockup / electrical) to find the correct `style` string for each shape.\n\n" +
         "---\n\n" +
-        "**XML reasoning discipline (applies ONLY when you chose XML — skip this whole section if you're using Mermaid):** Your job in XML is declaring logical structure — nodes, edges, labels, groupings. Follow these steps in order: (1) **Decide `postLayout` FIRST, before writing any XML.** If the XML diagram is a flowchart, state diagram, decision tree, or any directional/hierarchical process diagram (which you should rarely be writing as XML — prefer Mermaid), you MUST pass `postLayout` — use `verticalFlow` by default, `horizontalFlow` when the flow is drawn left-to-right, `tree` for pure hierarchies. Other algorithms (`force`, `stress`, `radial`) apply to their respective diagram types — see the `postLayout` parameter description. Omit `postLayout` only when the layout carries hand-crafted meaning (swimlanes, containers, architecture, UML) — the typical reason you chose XML in the first place. When `postLayout` is set, your x/y coordinates only need to express rough direction; ELK re-lays out the vertices. (1b) **Whenever you set `postLayout` to `verticalFlow` or `horizontalFlow`, you MUST also pass `startNodeIds` and `endNodeIds`** — arrays of cell IDs for your Start/entry and End/terminator nodes (e.g. `startNodeIds: [\"start\"]`, `endNodeIds: [\"end\"]`, or `endNodeIds: [\"success\",\"rejected\"]` for multi-outcome flows). This is always required, not just when the flow has feedback edges — ELK's topological detection mis-picks whenever your flow has loops, multiple entry points, or disconnected components. You are the one who named the cells; it's trivial for you to list them, and guesswork on the server side is not. (2) Pick ONE concrete scenario on your first impulse and commit — do not pitch alternatives, do not flip-flop between approaches. (3) Use the rigid grid in the XML reference (`x = col*180 + 40`, `y = row*120 + 40`) without computing spacings, canvas dimensions, or overlap checks. (4) Never add `<Array as=\"points\">` waypoints or `exitX/exitY/entryX/entryY` — when postLayout runs, ELK sets them; otherwise drawio's edge router handles it. (5) Do NOT narrate in your reasoning: no \"building the diagram\", no column enumeration, no coordinate math in prose, no coordinate re-verification after placement. Go straight to XML.\n\n" +
+        "**XML reasoning discipline (applies ONLY when you chose XML — skip this whole section if you're using Mermaid):** Your job in XML is declaring logical structure — nodes, edges, labels, groupings. Follow these steps in order: (1) **Decide `postLayout` FIRST, before writing any XML.** If the XML diagram is a flowchart, state diagram, decision tree, or any directional/hierarchical process diagram (which you should rarely be writing as XML — prefer Mermaid), you MUST pass `postLayout: \"elk\"` (add `direction: \"horizontal\"` when the flow is drawn left-to-right; it defaults to vertical). Omit `postLayout` only when the layout carries hand-crafted meaning (swimlanes, containers, architecture, UML) — the typical reason you chose XML in the first place. When `postLayout` is set, your x/y coordinates only need to express rough direction; ELK re-lays out the vertices. (2) Pick ONE concrete scenario on your first impulse and commit — do not pitch alternatives, do not flip-flop between approaches. (3) Use the rigid grid in the XML reference (`x = col*180 + 40`, `y = row*120 + 40`) without computing spacings, canvas dimensions, or overlap checks. (4) Never add `<Array as=\"points\">` waypoints or `exitX/exitY/entryX/entryY` — when postLayout runs, ELK sets them; otherwise drawio's edge router handles it. (5) Do NOT narrate in your reasoning: no \"building the diagram\", no column enumeration, no coordinate math in prose, no coordinate re-verification after placement. Go straight to XML.\n\n" +
         "**User preference override — XML only.** If the user expresses a preference for draw.io XML over Mermaid in any phrasing (examples: \"no mermaid\", \"skip mermaid\", \"use xml\", \"I want drawio format\", \"stop using mermaid\", \"give me the xml\", \"native drawio only\", etc.), from that point onward in the conversation you MUST use the `xml` parameter exclusively and MUST NOT use the `mermaid` parameter, even for diagram types where Mermaid would normally be preferable. This preference persists for the remainder of the conversation unless the user clearly reverses it (e.g. \"mermaid is fine again\"). When the preference is active, translate any diagram request — including flowcharts, sequence diagrams, ER diagrams, etc. — directly to well-formed mxGraphModel XML.\n\n" +
         "When using XML: IMPORTANT — the XML must be well-formed. Do NOT include ANY XML comments (<!-- -->) in the output.\n\n" +
         xmlReference +
@@ -6597,31 +6577,18 @@ export function createServer(html, options = {})
             "Mermaid.js diagram definition (e.g. 'graph TD\\n  A-->B'). Supports 26 diagram types — see the tool description for the full list. The diagram is parsed and laid out natively (no upstream mermaid runtime) and converted to draw.io format. Mutually exclusive with 'xml'."
           ),
         postLayout: z
-          .enum(["verticalFlow", "horizontalFlow", "tree", "force", "stress", "radial"])
+          .enum(["elk"])
           .optional()
           .describe(
-            "Optional client-side layout pass applied after the diagram renders, powered by ELK (Eclipse Layout Kernel). Vertices animate (morph) from the positions you supplied to the algorithm's layout — they are **replaced**, so only your edge topology survives. You are the judge of when a canonical layout will read better than the coordinates you wrote; set this whenever the diagram type fits one of the algorithms below:\n" +
-            "- `verticalFlow` (ELK layered, top-down): flowcharts, process diagrams, state diagrams, decision flows, pipelines drawn vertically, ER/class diagrams with clear parent→child direction.\n" +
-            "- `horizontalFlow` (ELK layered, left-to-right): sequence-of-steps pipelines drawn horizontally, swimlanes aligned L→R, any directional process where the layout is wider than tall.\n" +
-            "- `tree` (ELK mrtree): org charts, decision trees, taxonomies, file/folder hierarchies — pure tree structures with a single root.\n" +
-            "- `force` (ELK force-directed): network / topology diagrams without a clear hierarchy (peer-to-peer, social graphs, knowledge graphs).\n" +
-            "- `stress` (ELK stress majorization): small-to-mid general graphs where `force` looks too loose — usually tighter and more readable for 10-30 nodes without a root.\n" +
-            "- `radial` (ELK radial): concentric layers around a root (mind maps, centered ego networks, influence diagrams).\n" +
+            "Optional client-side ELK (Eclipse Layout Kernel) layered-flow pass applied after the diagram renders. The only value is `\"elk\"`. Vertices animate (morph) from the positions you supplied to the layered layout — they are **replaced**, so only your edge topology survives. Set it for directional/hierarchical diagrams: flowcharts, process diagrams, state diagrams, decision flows, pipelines, ER/class diagrams with clear parent→child direction. Flow direction (top-down vs left-to-right): for **Mermaid** it is taken from the flowchart code (`flowchart TD/TB` → top-down, `LR/RL` → left-to-right) — do not try to set it here; for **XML** set the optional `direction` field (defaults to top-down).\n" +
             "**Omit** for diagrams whose layout carries meaning you hand-crafted: swimlanes/pools, containers, architecture / deployment / network topology with grouped regions, P&ID or circuit schematics, floor plans, UML diagrams with deliberate placement.\n\n" +
-            "**For Mermaid flowcharts**, the native parser does its own layout, but it produces cramped or unbalanced output once the diagram has any structural complexity. Request `postLayout` whenever ANY of the following holds: ≥ ~20 nodes, OR ≥ 3 decision diamonds (`{...}` shapes), OR any feedback/back-edges (an edge that points to an earlier node, e.g. an error path looping back to a retry), OR ≥ 3 distinct endpoints. Pass `postLayout: \"verticalFlow\"` (for `flowchart TD/TB`) or `postLayout: \"horizontalFlow\"` (for `flowchart LR/RL`) along with `startNodeIds` and `endNodeIds` to re-layout via the same ELK algorithm draw.io's editor uses. Skip for simple flowcharts (linear chains, < 20 nodes, no branching/back-edges) and for non-flowchart Mermaid types (sequence, class, ER, sankey, etc. — postLayout doesn't apply).\n\n" +
-            "**When you set this to `verticalFlow` or `horizontalFlow`, you MUST also provide `startNodeIds` and `endNodeIds`** so ELK knows which nodes belong in the first and last layers."
+            "**For Mermaid flowcharts**, the native parser does its own layout, but it produces cramped or unbalanced output once the diagram has any structural complexity. Request `postLayout: \"elk\"` whenever ANY of the following holds: ≥ ~20 nodes, OR ≥ 3 decision diamonds (`{...}` shapes), OR any feedback/back-edges (an edge that points to an earlier node, e.g. an error path looping back to a retry), OR ≥ 3 distinct endpoints — the flow direction follows the flowchart code, so you never pass `direction` for Mermaid. Skip for simple flowcharts (linear chains, < 20 nodes, no branching/back-edges) and for non-flowchart Mermaid types (sequence, class, ER, sankey, etc. — postLayout doesn't apply)."
           ),
-        startNodeIds: z
-          .array(z.string())
+        direction: z
+          .enum(["vertical", "horizontal"])
           .optional()
           .describe(
-            "**REQUIRED whenever `postLayout` is `verticalFlow` or `horizontalFlow`.** Cell IDs of start/entry nodes — pinned to the first layer (top for verticalFlow, left for horizontalFlow). Always pass this for layered flowcharts; do not rely on ELK's automatic source detection. You authored the cell IDs, so listing them is trivial. Example: a login flow with `<mxCell id=\"start\" value=\"Start\" ...>` should pass `startNodeIds: [\"start\"]`. Multiple entry points are allowed (e.g. `[\"manualStart\", \"scheduledStart\"]`)."
-          ),
-        endNodeIds: z
-          .array(z.string())
-          .optional()
-          .describe(
-            "**REQUIRED whenever `postLayout` is `verticalFlow` or `horizontalFlow`.** Cell IDs of end/terminator nodes — pinned to the last layer (bottom for verticalFlow, right for horizontalFlow). Always pass this for layered flowcharts; do not rely on ELK's automatic sink detection. Example: `endNodeIds: [\"end\"]` for a single endpoint, or `endNodeIds: [\"success\", \"rejected\", \"expired\"]` for a multi-outcome flow."
+            "**XML only** — the flow direction for `postLayout: \"elk\"` on XML diagrams: `vertical` (top-down) or `horizontal` (left-to-right). Defaults to `vertical`. **Ignored for Mermaid**, where direction is read from the flowchart code (`flowchart TD/TB` vs `LR/RL`). Only meaningful together with `postLayout: \"elk\"`."
           ),
       },
       annotations:
@@ -6638,7 +6605,7 @@ export function createServer(html, options = {})
         "openai/toolInvocation/invoked": "Diagram ready.",
       },
     },
-    async function({ xml, mermaid, postLayout, startNodeIds, endNodeIds })
+    async function({ xml, mermaid, postLayout, direction })
     {
       var hasXml = (xml != null && typeof xml === "string" && xml.trim().length > 0);
       var hasMermaid = (mermaid != null && typeof mermaid === "string" && mermaid.trim().length > 0);
@@ -6656,8 +6623,6 @@ export function createServer(html, options = {})
       {
         var mermaidPayload = { mermaid: mermaid };
         if (postLayout) mermaidPayload.postLayout = postLayout;
-        if (startNodeIds) mermaidPayload.startNodeIds = startNodeIds;
-        if (endNodeIds) mermaidPayload.endNodeIds = endNodeIds;
         mermaidPayload._buildId = buildId;
         return {
           content: [{ type: "text", text: JSON.stringify(mermaidPayload) }],
@@ -6678,8 +6643,8 @@ export function createServer(html, options = {})
 
       var xmlPayload = { xml: normalizedXml };
       if (postLayout) xmlPayload.postLayout = postLayout;
-      if (startNodeIds) xmlPayload.startNodeIds = startNodeIds;
-      if (endNodeIds) xmlPayload.endNodeIds = endNodeIds;
+      // direction is XML-only; Mermaid derives it from the flowchart code.
+      if (direction) xmlPayload.direction = direction;
       xmlPayload._buildId = buildId;
 
       var content = [
