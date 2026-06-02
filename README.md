@@ -93,6 +93,10 @@ nothing is sent.
 | **MCP Tool Server** (`@drawio/mcp`) | No — carried in the URL `#fragment`, which browsers do not transmit to the server. |
 | **Skill + CLI** | No — written locally and exported by your local draw.io Desktop CLI. |
 
+By default the servers do not write diagram content to their logs — only request
+metadata (method, session, status, timing). The Cloudflare-hosted App Server logs
+response bodies only when run with `DEBUG=true`.
+
 ### Reducing external requests
 
 Even when the diagram itself stays local, the rendering loads draw.io's web-app /

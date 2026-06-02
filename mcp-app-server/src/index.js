@@ -163,35 +163,11 @@ async function startStreamableHTTPServer()
     const start = Date.now();
     console.log(`[req] ${req.method} method=${method || "(none)"} session=${sessionId} accept=${req.headers["accept"] || ""}`);
 
-    if (req.body && Object.keys(req.body).length > 0)
+    res.on("finish", function()
     {
-      console.log(`[req-body] ${JSON.stringify(req.body)}`);
-    }
-
-    const origWrite = res.write.bind(res);
-    const origEnd = res.end.bind(res);
-    var responseChunks = [];
-
-    res.write = function(chunk)
-    {
-      if (chunk) { responseChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk)); }
-      return origWrite(chunk);
-    };
-
-    res.end = function(chunk)
-    {
-      if (chunk) { responseChunks.push(Buffer.isBuffer(chunk) ? chunk.toString("utf8") : String(chunk)); }
       const elapsed = Date.now() - start;
       console.log(`[res] method=${method || "(none)"} session=${sessionId} status=${res.statusCode} ${elapsed}ms`);
-
-      if (responseChunks.length > 0)
-      {
-        const body = responseChunks.join("");
-        console.log(`[res-body] ${body.slice(0, 2000)}`);
-      }
-
-      return origEnd(chunk);
-    };
+    });
 
     const server = createServer(html, { domain: process.env.DOMAIN, xmlReference, mermaidReference, shapeIndex, buildId });
 
