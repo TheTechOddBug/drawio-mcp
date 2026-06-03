@@ -108,6 +108,9 @@ requests. To reduce or remove them:
   viewer instead of loading it from `viewer.diagrams.net`.
 - **Tool Server:** set the `DRAWIO_BASE_URL` environment variable to a self-hosted
   draw.io instance.
+- **Skill + CLI:** the opt-in `/drawio url` mode opens the diagram at
+  `app.diagrams.net` (hardcoded — no `DRAWIO_BASE_URL` equivalent). Use the default
+  `.drawio` output or local Desktop export instead if you need to avoid that request.
 
 ### Your LLM is a separate consideration
 
