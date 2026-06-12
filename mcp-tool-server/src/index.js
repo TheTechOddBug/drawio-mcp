@@ -13,6 +13,46 @@ import { tmpdir } from "os";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DRAWIO_BASE_URL = process.env.DRAWIO_BASE_URL || "https://app.diagrams.net/";
 
+// Single source for the version reported by --version and the MCP handshake.
+const packageInfo = JSON.parse(
+  readFileSync(join(__dirname, "..", "package.json"), "utf-8")
+);
+
+// Handle CLI metadata flags before any other startup work so they
+// respond without reading the reference files or touching stdio.
+const cliArgs = process.argv.slice(2);
+
+if (cliArgs.length > 0)
+{
+  if (cliArgs[0] === "--help" || cliArgs[0] === "-h")
+  {
+    console.log(`drawio-mcp ${packageInfo.version}
+
+Official draw.io MCP server for opening diagrams in the draw.io editor.
+
+Usage:
+  drawio-mcp              Start the MCP stdio server
+  drawio-mcp --help       Show this help text
+  drawio-mcp --version    Show the package version
+
+Options:
+  -h, --help              Show help
+  -v, --version           Show version`);
+    process.exit(0);
+  }
+  else if (cliArgs[0] === "--version" || cliArgs[0] === "-v")
+  {
+    console.log(packageInfo.version);
+    process.exit(0);
+  }
+  else
+  {
+    console.error(`Unknown option: ${cliArgs[0]}`);
+    console.error("Run `drawio-mcp --help` for usage.");
+    process.exit(1);
+  }
+}
+
 // Read the shared XML reference once at startup (single source of truth).
 // In the repo: read from shared/. When installed via npm: read from the
 // local copy created by the prepack script.
@@ -243,7 +283,7 @@ const tools =
 const server = new Server(
   {
     name: "drawio-mcp",
-    version: "1.0.0",
+    version: packageInfo.version,
   },
   {
     capabilities:
