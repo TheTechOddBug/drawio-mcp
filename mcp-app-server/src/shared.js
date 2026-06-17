@@ -1963,6 +1963,24 @@ function streamMergeXmlDelta(graph, pendingEdges, xmlNode)
 
       if (existing != null)
       {
+        // Promote a cell that was first inserted as a plain (non-vertex,
+        // non-edge) cell once its real role finally streams in. This
+        // happens with <object>/<UserObject> wrappers: the id lives on
+        // the wrapper but vertex/edge="1" lives on the inner <mxCell>.
+        // healPartialXml can close the wrapper before that inner cell
+        // arrives, so decodeCell yields an id-only cell with vertex=false.
+        // setStyle/setGeometry below would then update a cell the renderer
+        // never builds a shape for — it renders as blank space. Flip the
+        // flags and invalidate so the view rebuilds it as a real shape.
+        if ((decoded.vertex && !existing.vertex) ||
+            (decoded.edge && !existing.edge))
+        {
+          existing.vertex = decoded.vertex;
+          existing.edge = decoded.edge;
+          graph.view.clear(existing, false, false);
+          graph.view.invalidate(existing, true, false);
+        }
+
         if (decoded.style != null && decoded.style !== existing.style)
         {
           model.setStyle(existing, decoded.style);
