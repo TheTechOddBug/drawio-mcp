@@ -6,6 +6,7 @@ import {
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { z } from "zod";
 import { normalizeDiagramXml, INVALID_DIAGRAM_XML_MESSAGE } from "./normalize-diagram-xml.js";
+import { computeLibavoidRoutes } from "../../shared/libavoid-routing.js";
 
 /**
  * Build the self-contained HTML string that renders diagrams.
@@ -446,6 +447,7 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
     <script>
 ${appWithDepsJs}
 ${normalizeDiagramXml.toString()}
+${computeLibavoidRoutes.toString()}
 
 // --- XML healing for partial/streaming XML ---
 
@@ -1697,13 +1699,6 @@ function getAbsoluteModelBounds(graph, cell)
   return { x: geo.x + off.x, y: geo.y + off.y, w: geo.width, h: geo.height };
 }
 
-// Three points collinear? Zero cross product (with a 1px tolerance) means the
-// middle point lies on the segment between its neighbours and is redundant.
-function isCollinear(a, b, c)
-{
-  return Math.abs((b.x - a.x) * (c.y - a.y) - (c.x - a.x) * (b.y - a.y)) < 1;
-}
-
 /**
  * Run libavoid over the current graph: register every vertex as an obstacle,
  * route every edge (whose endpoints are known vertices) around them with
@@ -1711,97 +1706,70 @@ function isCollinear(a, b, c)
  * back as edge waypoints. Vertices are NOT moved — this is pure edge routing,
  * the complement to applyPostLayout (which moves vertices). Synchronous once
  * Avoid is ready; the caller awaits readiness via applyRouting().
+ *
+ * The libavoid-driving core lives in the shared computeLibavoidRoutes() helper
+ * (inlined into this bundle via toString() — see buildHtml) so it stays in sync
+ * with the mcp-tool-server's server-side routing. Here we only do the mxGraph-
+ * specific extract (vertices/edges in absolute coords) and write-back.
  */
 function routeWithLibavoid(graph, Avoid)
 {
   var model = graph.getModel();
-  var router = new Avoid.Router(Avoid.RouterFlag.OrthogonalRouting.value);
-
-  // A buffer keeps wires clear of shape edges (without it routes run flush
-  // along the box borders); nudging spreads parallel routes that share a
-  // corridor so they don't overlap. NOTE: setRoutingParameter takes the
-  // RoutingParameter enum OBJECT, not its .value — passing the integer
-  // silently no-ops. (The Router constructor is the opposite: it needs
-  // RouterFlag.OrthogonalRouting.value, the integer.)
-  try { router.setRoutingParameter(Avoid.RoutingParameter.shapeBufferDistance, 16); } catch (_) {}
-  try { router.setRoutingParameter(Avoid.RoutingParameter.idealNudgingDistance, 14); } catch (_) {}
-
-  // 1. Obstacles: one ShapeRef per vertex, in absolute model coords.
   var id;
+
+  // Extract obstacles + edges in absolute model coordinates.
+  var vertices = [];
+  var edges = [];
+  var edgeCells = {};
+
   for (id in model.cells)
   {
-    var v = model.cells[id];
-    if (v == null || !v.vertex) continue;
-    var b = getAbsoluteModelBounds(graph, v);
-    if (b == null || !(b.w > 0) || !(b.h > 0)) continue;
-    new Avoid.ShapeRef(router, new Avoid.Rectangle(
-      new Avoid.Point(b.x, b.y), new Avoid.Point(b.x + b.w, b.y + b.h)));
+    var c = model.cells[id];
+    if (c == null) continue;
+
+    if (c.vertex)
+    {
+      var b = getAbsoluteModelBounds(graph, c);
+      if (b != null && b.w > 0 && b.h > 0)
+      {
+        vertices.push({ id: id, x: b.x, y: b.y, w: b.w, h: b.h });
+      }
+    }
+    else if (c.edge)
+    {
+      var s = model.getTerminal(c, true);
+      var t = model.getTerminal(c, false);
+      if (s != null && t != null && s.vertex && t.vertex)
+      {
+        edges.push({ id: id, source: s.id, target: t.id });
+        edgeCells[id] = c;
+      }
+    }
   }
 
-  // 2. Connectors: one ConnRef per edge with both terminals resolved to
-  //    vertices. Endpoints are fixed points at the terminal shape centers —
-  //    libavoid happily lets a connector exit its own endpoint shape. The
-  //    side where the route actually leaves/enters each shape becomes the
-  //    edge's exit/entry constraint in step 3 (we keep the shape bounds for
-  //    that), and the interior bends become waypoints.
-  var conns = [];
-  for (id in model.cells)
-  {
-    var e = model.cells[id];
-    if (e == null || !e.edge) continue;
-    var s = model.getTerminal(e, true);
-    var t = model.getTerminal(e, false);
-    if (s == null || t == null || !s.vertex || !t.vertex) continue;
-    var sb = getAbsoluteModelBounds(graph, s);
-    var tb = getAbsoluteModelBounds(graph, t);
-    if (sb == null || tb == null) continue;
-    var conn = new Avoid.ConnRef(router,
-      new Avoid.ConnEnd(new Avoid.Point(sb.x + sb.w / 2, sb.y + sb.h / 2)),
-      new Avoid.ConnEnd(new Avoid.Point(tb.x + tb.w / 2, tb.y + tb.h / 2)));
-    conns.push({ edge: e, conn: conn });
-  }
+  var routes = computeLibavoidRoutes(Avoid, vertices, edges);
+  var routedIds = Object.keys(routes);
+  if (routedIds.length === 0) return false;
 
-  if (conns.length === 0) { router.delete(); return false; }
-
-  router.processTransaction();
-
-  // 3. Map each orthogonal route onto an orthogonalEdgeStyle edge. We keep
-  //    that style (rather than baking in straight segments) so the segments
-  //    stay draggable in the draw.io editor — libavoid's route is already
-  //    axis-aligned, so it maps cleanly. We anchor connectors at shape
-  //    centers, so every route leaves/enters at a side MIDPOINT — which is
-  //    exactly where orthogonalEdgeStyle connects a floating endpoint by
-  //    default. So we set NO exitX/Y / entryX/Y constraints: the floating
-  //    connection lands in the same place AND re-routes naturally if the user
-  //    later moves a shape in the editor. We only write the interior bends as
-  //    waypoints (collinear/redundant points dropped); the first/last route
-  //    points are the centers, which the floating endpoints supersede.
+  // Write the routes back. We keep orthogonalEdgeStyle (libavoid is already
+  // orthogonal) so the segments stay draggable in the draw.io editor, and we
+  // leave the endpoints FLOATING — every route meets a shape at a side
+  // midpoint, which is where a floating orthogonal endpoint connects anyway,
+  // and floating endpoints re-route naturally if a shape is later moved. The
+  // helper's waypoints are absolute; convert to the edge's parent frame.
   model.beginUpdate();
   try
   {
-    for (var i = 0; i < conns.length; i++)
+    for (var i = 0; i < routedIds.length; i++)
     {
-      var edge = conns[i].edge;
-      var route = conns[i].conn.displayRoute();
-      var n = route.size();
-      if (n < 2) continue;
-
+      var edge = edgeCells[routedIds[i]];
+      var wpsAbs = routes[routedIds[i]];
       var off = getAbsoluteParentOffset(graph, edge);
 
-      var pts = [];
-      for (var k = 0; k < n; k++)
-      {
-        var rp = route.at(k);
-        pts.push({ x: rp.x, y: rp.y });
-      }
-
-      // Interior bends only; drop any point collinear with its neighbours
-      // (libavoid is usually minimal already, but this is cheap insurance).
       var wps = [];
-      for (var j = 1; j < n - 1; j++)
+      for (var k = 0; k < wpsAbs.length; k++)
       {
-        if (isCollinear(pts[j - 1], pts[j], pts[j + 1])) continue;
-        wps.push(new mxPoint(Math.round(pts[j].x) - off.x, Math.round(pts[j].y) - off.y));
+        wps.push(new mxPoint(wpsAbs[k].x - off.x, wpsAbs[k].y - off.y));
       }
 
       var geo = model.getGeometry(edge);
@@ -1809,8 +1777,6 @@ function routeWithLibavoid(graph, Avoid)
       geo.points = wps;
       model.setGeometry(edge, geo);
 
-      // Keep orthogonalEdgeStyle (libavoid is orthogonal); curved=0 so the
-      // right angles aren't bowed. Any author rounded=1 still softens corners.
       var style = model.getStyle(edge) || '';
       style = mxUtils.setStyle(style, mxConstants.STYLE_EDGE, 'orthogonalEdgeStyle');
       style = mxUtils.setStyle(style, 'curved', '0');
@@ -1820,11 +1786,10 @@ function routeWithLibavoid(graph, Avoid)
   finally
   {
     model.endUpdate();
-    router.delete();
   }
 
   graph.view.validate();
-  console.log('[libavoid] routed ' + conns.length + ' edge(s)');
+  console.log('[libavoid] routed ' + routedIds.length + ' edge(s)');
   return true;
 }
 

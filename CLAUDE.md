@@ -39,6 +39,7 @@ Opens the draw.io editor with XML content.
 - `content` (required): Draw.io XML content
 - `lightbox` (optional): Open in read-only lightbox mode (default: false)
 - `dark` (optional): Dark mode - "true" or "false" (default: false)
+- `routing` (optional): `"libavoid"` runs a server-side obstacle-avoiding orthogonal edge-routing pass before opening — keeps vertex positions, reroutes connectors around shapes. Use for hand-placed diagrams where edges would otherwise cross boxes.
 
 **Example XML:**
 ```xml

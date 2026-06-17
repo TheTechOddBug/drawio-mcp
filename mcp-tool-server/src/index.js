@@ -4,6 +4,7 @@ import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { ListToolsRequestSchema, CallToolRequestSchema } from "@modelcontextprotocol/sdk/types.js";
 import pako from "pako";
+import { routeXml } from "./libavoid-pass.js";
 import { spawn } from "child_process";
 import { existsSync, readFileSync, writeFileSync, unlinkSync } from "fs";
 import { join, dirname } from "path";
@@ -207,6 +208,13 @@ const tools =
           enum: ["auto", "true", "false"],
           description: "Dark mode setting. Default: auto",
         },
+        routing:
+        {
+          type: "string",
+          enum: ["libavoid"],
+          description:
+            "Optional obstacle-avoiding orthogonal edge-routing pass (libavoid), applied server-side before the diagram opens. The only value is \"libavoid\". It keeps your vertex positions and only recomputes the connectors so they run in clean right-angle segments that route AROUND the boxes instead of cutting through them (draw.io's default router draws a straight/simple line with no obstacle avoidance). Set it for hand-placed diagrams where edges would otherwise cross shapes — architecture, network, deployment, UML, floor plans. Omit it for sparse layouts where connectors won't overlap anything.",
+        },
       },
       required: ["content"],
     },
@@ -371,6 +379,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) =>
           ],
           isError: true,
         };
+    }
+
+    // XML only: optional libavoid obstacle-avoiding edge-routing pass before
+    // the diagram is compressed into the URL. routeXml never throws — it
+    // returns the original XML if routing isn't applicable or anything fails.
+    if (type === "xml" && args?.routing === "libavoid")
+    {
+      content = await routeXml(content);
     }
 
     const url = generateDrawioUrl(content, type, { lightbox, dark });
