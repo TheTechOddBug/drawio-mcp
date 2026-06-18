@@ -14,7 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { execSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { buildHtml, processAppBundle, processMermaidBundle, processElkBundle, processLibavoidBundle } from "./shared.js";
+import { buildHtml, processAppBundle, processLibavoidBundle } from "./shared.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -59,23 +59,10 @@ const pakoDeflateJs = fs.readFileSync(
   "utf-8"
 );
 
-// Read + process the drawio-elk bundle (vendored from drawio-dev — see
-// vendor/elk/README.md). Ships as ESM; processElkBundle strips the export
-// and aliases the default export to `var ELK` so drawio-mermaid and the
-// postLayout pass pick it up from globalThis. MUST be loaded before mermaid.
-const elkBundlePath = path.join(__dirname, "..", "vendor", "elk", "drawio-elk.min.js");
-const elkRaw = fs.readFileSync(elkBundlePath, "utf-8");
-const elkJs = processElkBundle(elkRaw);
-console.log(`ELK bundle: ${elkBundlePath} (${(elkRaw.length / 1024).toFixed(1)} KB)`);
-
-// Read + process the drawio-mermaid bundle (vendored from drawio-dev — see
-// vendor/mermaid/README.md). Ships as ESM; processMermaidBundle aliases
-// the mxMermaidToDrawio export to a global so the viewer code can call it.
-// Reads globalThis.ELK on init.
-const mermaidBundlePath = path.join(__dirname, "..", "vendor", "mermaid", "drawio-mermaid.min.js");
-const mermaidRaw = fs.readFileSync(mermaidBundlePath, "utf-8");
-const mermaidJs = processMermaidBundle(mermaidRaw);
-console.log(`Mermaid bundle: ${mermaidBundlePath} (${(mermaidRaw.length / 1024).toFixed(1)} KB)`);
+// drawio-elk and drawio-mermaid are NOT inlined — the Worker serves HTML that
+// loads them from the viewer.diagrams.net CDN (see buildHtml). This keeps them
+// out of generated-html.js (~1.5 MB), lets browsers cache them cross-session,
+// and keeps their versions in sync with the viewer per draw.io release.
 
 // Read + process the libavoid-js bundle (WASM obstacle-avoiding edge router —
 // see vendor/libavoid/README.md). The glue ships as ESM + import.meta.url;
@@ -127,7 +114,7 @@ console.log(`Favicon: ${faviconPath} (${(faviconBase64.length / 1024).toFixed(1)
 // worker can echo it in every tool response.
 const buildId = getBuildId();
 console.log(`Build ID: ${buildId}`);
-const html = buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, { elkJs, libavoidJs, libavoidWasmB64, buildId });
+const html = buildHtml(appWithDepsJs, pakoDeflateJs, null, { libavoidJs, libavoidWasmB64, buildId });
 const outPath = path.join(__dirname, "generated-html.js");
 
 fs.writeFileSync(outPath,

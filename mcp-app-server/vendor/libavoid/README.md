@@ -2,9 +2,11 @@
 
 Obstacle-avoiding orthogonal **edge routing** (the `routing: "libavoid"`
 pass), vendored from the upstream [`libavoid-js`](https://github.com/Aksem/libavoid-js)
-npm package. Unlike `vendor/elk/` (which both *places* nodes and routes
+npm package. Unlike drawio-elk (which both *places* nodes and routes
 edges), libavoid never moves a vertex — it only computes edge paths that
-route around the vertices as obstacles.
+route around the vertices as obstacles. (drawio-elk and drawio-mermaid load
+from the `viewer.diagrams.net` CDN; libavoid stays vendored because WASM
+can't be a plain CDN `<script src>`.)
 
 Artifacts:
 

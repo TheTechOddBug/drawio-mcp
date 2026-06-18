@@ -10,16 +10,19 @@ import { computeLibavoidRoutes } from "../../shared/libavoid-routing.js";
 
 /**
  * Build the self-contained HTML string that renders diagrams.
- * All dependencies (ext-apps App class, pako deflate, drawio-mermaid,
- * drawio-elk) are inlined so the HTML works in a sandboxed iframe with
- * no extra fetches.
+ * The MCP Apps App class, pako deflate, and (optionally) libavoid are
+ * inlined. The draw.io viewer, drawio-elk, and drawio-mermaid load from
+ * the viewer.diagrams.net CDN by default — cached cross-session and kept
+ * in version-sync with each draw.io release. Pass viewerJs/elkJs/mermaidJs
+ * to inline a local build instead (for dev — see VIEWER_PATH/ELK_PATH/
+ * MERMAID_PATH in index.js).
  *
  * @param {string} appWithDepsJs - The processed MCP Apps SDK bundle (exports stripped, App alias added).
  * @param {string} pakoDeflateJs - The pako deflate browser bundle.
- * @param {string} mermaidJs - The drawio-mermaid IIFE bundle. Exposes `mxMermaidToDrawio.parseText(text, config)`. Reads `globalThis.ELK` on init — caller must inline `elkJs` first.
+ * @param {string} [mermaidJs] - If provided, inlines this drawio-mermaid bundle instead of loading it from CDN. Exposes `mxMermaidToDrawio.parseText(text, config)`; reads `globalThis.ELK` on init (loaded before it either way).
  * @param {object} [options] - Optional configuration.
  * @param {string} [options.viewerJs] - If provided, inlines this JS instead of loading viewer-static.min.js from CDN.
- * @param {string} [options.elkJs] - The drawio-elk IIFE bundle. Defines `var ELK` (engine) plus `ElkLayout`/`ElkAdapter`/`ElkApplier` (the mxGraph bridge + postLayout facade), consumed by drawio-mermaid and the postLayout pass. Inlined before mermaid.
+ * @param {string} [options.elkJs] - If provided, inlines this drawio-elk bundle instead of loading it from CDN. Defines `var ELK` (engine) plus `ElkLayout`/`ElkAdapter`/`ElkApplier` (the mxGraph bridge + postLayout facade), consumed by drawio-mermaid and the postLayout pass. Loaded before mermaid.
  * @param {string} [options.libavoidJs] - The processed libavoid-js bundle (exports stripped, `globalThis.AvoidLib` aliased, loader patched to read `globalThis.__LIBAVOID_WASM_BINARY`). Powers the `routing: "libavoid"` edge-routing pass.
  * @param {string} [options.libavoidWasmB64] - The libavoid.wasm binary, base64-encoded. Decoded to a Uint8Array and handed to the Emscripten module as `wasmBinary` so the router instantiates with no fetch.
  * @param {string} [options.buildId] - Build identifier (git SHA + timestamp). Exposed as window.__DRAWIO_BUILD in the iframe.
@@ -421,9 +424,10 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
     <!-- pako deflate (inlined, for #create URL generation) -->
     <script>${pakoDeflateJs}</script>
 
+    <!-- drawio-elk. Defines var ELK + ElkLayout/ElkAdapter/ElkApplier (engine + mxGraph bridge), consumed by drawio-mermaid and the postLayout pass. Must come before drawio-mermaid. -->
     ${elkJs
-      ? '<!-- drawio-elk (inlined). Defines var ELK + ElkLayout/ElkAdapter/ElkApplier (engine + mxGraph bridge), consumed by drawio-mermaid and the postLayout pass. Must come before drawio-mermaid. -->\n    <script>' + elkJs + '<\/script>'
-      : ''
+      ? '<script>' + elkJs + '<\/script>'
+      : '<script src="https://viewer.diagrams.net/js/elk/drawio-elk.min.js"><\/script>'
     }
 
     ${libavoidBlock}
@@ -441,7 +445,10 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         EditorUi.prototype.emptyDiagramXml = '<mxGraphModel><root><mxCell id="0"/><mxCell id="1" parent="0"/></root></mxGraphModel>';
       }
     </script>
-    <script>${mermaidJs}</script>
+    ${mermaidJs
+      ? '<script>' + mermaidJs + '<\/script>'
+      : '<script src="https://viewer.diagrams.net/js/mermaid/drawio-mermaid.min.js"><\/script>'
+    }
 
     <!-- MCP Apps SDK (inlined, exports stripped, App alias added) -->
     <script>

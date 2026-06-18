@@ -57,21 +57,28 @@ const pakoDeflateJs = fs.readFileSync(
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// Inline the drawio-elk bundle (Eclipse Layout Kernel, ~790 KB). Ships as
-// ESM with a default export (the ELK class); processElkBundle strips the
-// export and aliases it to `var ELK` so it ends up on globalThis (consumed
-// by drawio-mermaid and the postLayout pass). MUST be loaded before drawio-mermaid.
-const elkJs = processElkBundle(fs.readFileSync(
-  path.join(__dirname, "..", "vendor", "elk", "drawio-elk.min.js"), "utf-8"
-));
+// drawio-elk (Eclipse Layout Kernel + mxGraph bridge) and drawio-mermaid
+// (native Mermaid parser + layout) load from the viewer.diagrams.net CDN by
+// default — see buildHtml. For testing a local build before it's published,
+// set ELK_PATH / MERMAID_PATH to a built bundle and it's inlined instead.
+// processElkBundle/processMermaidBundle accept both the published IIFE form
+// and an ESM build (exports stripped + aliased to globals). Example:
+//   ELK_PATH=../drawio-dev/src/main/webapp/js/elk/drawio-elk.min.js npm start
+var elkJs = null;
 
-// Inline the drawio-mermaid bundle (native Mermaid parser + layout, replaces
-// the upstream ~2.7 MB mermaid.min.js + extensions.min.js runtime). Ships as
-// ESM since the recent dist refactor; processMermaidBundle strips the export
-// and aliases `mxMermaidToDrawio` to a global the viewer code can call.
-const mermaidJs = processMermaidBundle(fs.readFileSync(
-  path.join(__dirname, "..", "vendor", "mermaid", "drawio-mermaid.min.js"), "utf-8"
-));
+if (process.env.ELK_PATH)
+{
+  elkJs = processElkBundle(fs.readFileSync(path.resolve(process.env.ELK_PATH), "utf-8"));
+  console.log("Inlining local drawio-elk from", process.env.ELK_PATH);
+}
+
+var mermaidJs = null;
+
+if (process.env.MERMAID_PATH)
+{
+  mermaidJs = processMermaidBundle(fs.readFileSync(path.resolve(process.env.MERMAID_PATH), "utf-8"));
+  console.log("Inlining local drawio-mermaid from", process.env.MERMAID_PATH);
+}
 
 // Inline the libavoid-js bundle (WASM obstacle-avoiding edge router, powers
 // the routing: "libavoid" pass). The glue (~44 KB) ships as ESM and uses
