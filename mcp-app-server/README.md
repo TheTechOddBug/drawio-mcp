@@ -36,6 +36,8 @@ https://mcp.draw.io/mcp
 
 Add this URL as a remote MCP server in Claude.ai or any MCP Apps-compatible host — no installation or setup required.
 
+> **Note:** This server renders diagrams **inline** via the [MCP Apps](https://modelcontextprotocol.io/docs/extensions/apps) protocol, so it requires an MCP Apps–capable host (e.g. Claude.ai). In hosts that don't support MCP Apps — such as **VS Code / GitHub Copilot**, Cursor, or Claude Code — the tool connects but has nothing to render, so the diagram won't appear. For those clients use the stdio [`@drawio/mcp`](../mcp-tool-server) tool server instead, which opens diagrams in the browser.
+
 ## Self-Hosting
 
 If you prefer to run your own instance, you can use Node.js or deploy to Cloudflare Workers.
