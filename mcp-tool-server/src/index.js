@@ -66,7 +66,7 @@ const xmlReference = readFileSync(
 
 // Same dual-path lookup for the Mermaid reference. Appended to the
 // open_drawio_mermaid tool description so LLMs get concrete syntax hints
-// for every supported diagram type (26) plus flowchart styling.
+// for every supported diagram type (28) plus flowchart styling.
 const sharedMermaidPath = join(__dirname, "..", "..", "shared", "mermaid-reference.md");
 const localMermaidPath = join(__dirname, "mermaid-reference.md");
 const mermaidReference = readFileSync(
