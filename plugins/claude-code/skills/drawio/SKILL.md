@@ -21,11 +21,11 @@ Generate draw.io diagrams as native `.drawio` files. Optionally export to PNG, S
 
 Check the user's request for a format preference. Examples:
 
-- `/drawio create a flowchart` → `flowchart.drawio`
-- `/drawio png flowchart for login` → `login-flow.drawio.png`
-- `/drawio svg: ER diagram` → `er-diagram.drawio.svg`
-- `/drawio pdf architecture overview` → `architecture-overview.drawio.pdf`
-- `/drawio url flowchart for user login` → opens browser at `app.diagrams.net` with the diagram, keeps `login-flow.drawio` locally
+- `/drawio:drawio create a flowchart` → `flowchart.drawio`
+- `/drawio:drawio png flowchart for login` → `login-flow.drawio.png`
+- `/drawio:drawio svg: ER diagram` → `er-diagram.drawio.svg`
+- `/drawio:drawio pdf architecture overview` → `architecture-overview.drawio.pdf`
+- `/drawio:drawio url flowchart for user login` → opens browser at `app.diagrams.net` with the diagram, keeps `login-flow.drawio` locally
 
 If no format is mentioned, just write the `.drawio` file and open it in draw.io. The user can always ask to export later.
 
@@ -65,7 +65,7 @@ const xml = fs.readFileSync(process.argv[1], "utf8");
 const compressed = zlib.deflateRawSync(encodeURIComponent(xml)).toString("base64");
 const payload = encodeURIComponent(JSON.stringify({ type: "xml", compressed: true, data: compressed }));
 console.log("https://app.diagrams.net/?grid=0&pv=0&border=10&edit=_blank#create=" + payload);
-' DIAGRAM.drawio)
+' "DIAGRAM.drawio")
 ```
 
 The URL format matches the MCP Tool Server. Node.js's `zlib.deflateRawSync` and `pako.deflateRaw` both implement RFC 1951 and produce identical output, so URLs from either source are interchangeable.
@@ -98,10 +98,18 @@ cmd.exe /c start "" "$(wslpath -w "$TMPFILE")"
 
 **Windows (native) example:**
 
-```cmd
-echo [InternetShortcut] > %TEMP%\drawio.url
-echo URL=%URL% >> %TEMP%\drawio.url
-start "" "%TEMP%\drawio.url"
+Do **not** build the `.url` file with `echo URL=%URL%`. The generated URL contains `&` characters (`?grid=0&pv=0&...`) that `cmd.exe` treats as command separators, so the shortcut is written truncated and the diagram payload is lost — the exact failure the `.url` file is meant to prevent. Let Node write the file directly (it already holds the URL string) and open only the resulting path, which never contains `&`:
+
+```bash
+TMPFILE=$(node -e '
+const fs = require("fs");
+const os = require("os");
+const path = require("path");
+const p = path.join(os.tmpdir(), "drawio.url");
+fs.writeFileSync(p, "[InternetShortcut]\r\nURL=" + process.argv[1] + "\r\n");
+process.stdout.write(p);
+' "$URL")
+cmd.exe /c start "" "$TMPFILE"
 ```
 
 ### After opening
@@ -138,19 +146,19 @@ grep -qi microsoft /proc/version 2>/dev/null && echo "WSL2"
 On WSL2, use the Windows draw.io Desktop executable via `/mnt/c/...`:
 
 ```bash
-DRAWIO_CMD=`/mnt/c/Program Files/draw.io/draw.io.exe`
+DRAWIO_CMD="/mnt/c/Program Files/draw.io/draw.io.exe"
 ```
 
-The backtick quoting is required to handle the space in `Program Files` in bash.
+Double-quote the path so the space in `Program Files` is treated as part of the path. Do **not** wrap it in backticks — in bash, backticks are command substitution, which would try to *execute* the binary at locate-time instead of storing its path.
 
 If draw.io is installed in a non-default location, check common alternatives:
 
 ```bash
 # Default install path
-`/mnt/c/Program Files/draw.io/draw.io.exe`
+"/mnt/c/Program Files/draw.io/draw.io.exe"
 
 # Per-user install (if the above does not exist)
-`/mnt/c/Users/$WIN_USER/AppData/Local/Programs/draw.io/draw.io.exe`
+"/mnt/c/Users/$WIN_USER/AppData/Local/Programs/draw.io/draw.io.exe"
 ```
 
 #### macOS
@@ -176,13 +184,13 @@ Use `which drawio` (or `where draw.io` on Windows) to check if it's on PATH befo
 ### Export command
 
 ```bash
-drawio -x -f <format> -e -b 10 -o <output> <input.drawio>
+drawio -x -f <format> -e -b 10 -o "<output>" "<input.drawio>"
 ```
 
 **WSL2 example:**
 
 ```bash
-`/mnt/c/Program Files/draw.io/draw.io.exe` -x -f png -e -b 10 -o diagram.drawio.png diagram.drawio
+"/mnt/c/Program Files/draw.io/draw.io.exe" -x -f png -e -b 10 -o "diagram.drawio.png" "diagram.drawio"
 ```
 
 Key flags:
