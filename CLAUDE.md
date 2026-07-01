@@ -78,6 +78,16 @@ Opens the draw.io editor with a Mermaid.js diagram definition.
 - `lightbox` (optional): Open in read-only lightbox mode (default: false)
 - `dark` (optional): Dark mode - "true" or "false" (default: false)
 
+### `search_shapes`
+
+Searches the draw.io shape library by keywords (same tool as the app server's `search_shapes`, sharing `shared/shape-search.js`). The ~4.6 MB index is not bundled in the npm package — it is fetched from the CDN on first use (overridable via `DRAWIO_SHAPE_INDEX_URL`), or read locally in an in-repo checkout.
+
+**Parameters:**
+- `query` (required): Space-separated search keywords (e.g. `aws lambda`, `cisco router`, `kubernetes pod`)
+- `limit` (optional): Maximum results to return (default: 10, max: 50)
+
+**Output:** Array of matching shapes with `{style, w, h, title}` — style strings can be used directly in `mxCell` style attributes. Use only for diagrams needing industry-specific icons; skip for standard flowcharts, UML, ERD, and org charts.
+
 ## Quick Decision Guide
 
 | Need | Use | Reliability |

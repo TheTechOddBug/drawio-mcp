@@ -28,6 +28,12 @@ Opens draw.io with CSV data converted to a diagram. Useful for org charts, but C
 
 Opens draw.io with Mermaid.js syntax. **Recommended default** — handles flowcharts, sequences, ER diagrams, Gantt charts, and more reliably.
 
+### `search_shapes`
+
+Searches the draw.io shape library (~10,000 shapes) by keywords and returns matching shapes with their exact `style` strings, dimensions, and titles — for feeding industry-specific icons (AWS, Azure, GCP, Cisco, Kubernetes, P&ID, electrical, BPMN) into `open_drawio_xml`. The algorithm is the shared `buildTagMap`/`searchShapes` (canonical in `shared/shape-search.js`, copied into `src/` by `copy-shared`), identical to the app server's.
+
+To keep the npm package lean, the ~4.6 MB `search-index.json` is **not** bundled. It is loaded lazily on the **first** `search_shapes` call and cached in memory for the process lifetime; the tag lookup map is built once at that point. An in-repo checkout reads the local `shape-search/search-index.json` (so dev and tests need no network); a published install fetches it from the CDN (`https://cdn.jsdelivr.net/gh/jgraph/drawio-mcp@main/shape-search/search-index.json`, overridable via `DRAWIO_SHAPE_INDEX_URL`). The tool is always advertised; if the index can't be loaded, the call returns a clear error instead of the tool being hidden.
+
 ## URL Generation
 
 1. Content is encoded with `encodeURIComponent`
@@ -46,7 +52,7 @@ Opens draw.io with Mermaid.js syntax. **Recommended default** — handles flowch
 
 ## XML Reference
 
-The `open_drawio_xml` tool description is loaded at startup from `shared/xml-reference.md` (single source of truth for all prompts). The `copy-shared` script (run on `prestart` and `prepack`) copies it — plus `shared/libavoid-routing.js` — into `src/` so the npm package is self-contained. These copies are gitignored; `libavoid-pass.js` imports the helper from the local copy with a fallback to `../../shared/` for in-repo runs.
+The `open_drawio_xml` tool description is loaded at startup from `shared/xml-reference.md` (single source of truth for all prompts). The `copy-shared` script (run on `prestart` and `prepack`) copies it — plus `shared/libavoid-routing.js` and `shared/shape-search.js` — into `src/` so the npm package is self-contained. These copies are gitignored; `libavoid-pass.js` and the `search_shapes` loader import the helper from the local copy with a fallback to `../../shared/` for in-repo runs. (The ~4.6 MB `search-index.json` is deliberately **not** copied/bundled — it is fetched at runtime; see `search_shapes` above.)
 
 ## Coding Conventions
 

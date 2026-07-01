@@ -74,6 +74,71 @@ const mermaidReference = readFileSync(
   "utf-8"
 );
 
+// Shape search. To keep the npm package lean, the ~4.6 MB shape index is NOT
+// bundled — it is fetched from the CDN on first use and cached in memory for the
+// process lifetime. In-repo checkouts read the local file instead, so dev and
+// tests never touch the network. Override the source with DRAWIO_SHAPE_INDEX_URL.
+// The search algorithm (buildTagMap/searchShapes) is the shared
+// shared/shape-search.js, copied into src/ by copy-shared and bundled.
+const SHAPE_INDEX_URL =
+  process.env.DRAWIO_SHAPE_INDEX_URL ||
+  "https://cdn.jsdelivr.net/gh/jgraph/drawio-mcp@main/shape-search/search-index.json";
+
+// Local-file fast path: repo checkout first, then an optional src/ copy (present
+// only if a consumer chose to bundle it). Absent in a default npm install.
+const localShapeIndexCandidates =
+[
+  join(__dirname, "..", "..", "shape-search", "search-index.json"),
+  join(__dirname, "search-index.json"),
+];
+
+let shapeSearchPromise = null;
+
+// Resolve once to { searchShapes, shapeIndex, tagMap }, cached for the process.
+// Reads a local index if present, otherwise fetches SHAPE_INDEX_URL. On failure
+// the promise is cleared so a later call can retry (e.g. transient network error).
+function loadShapeSearch()
+{
+  if (!shapeSearchPromise)
+  {
+    shapeSearchPromise = (async function()
+    {
+      const mod = await import("./shape-search.js")
+        .catch(function() { return import("../../shared/shape-search.js"); });
+
+      const localPath = localShapeIndexCandidates.find(function(p) { return existsSync(p); });
+      let raw;
+
+      if (localPath)
+      {
+        raw = readFileSync(localPath, "utf-8");
+      }
+      else
+      {
+        const res = await fetch(SHAPE_INDEX_URL);
+
+        if (!res.ok)
+        {
+          throw new Error("HTTP " + res.status + " fetching " + SHAPE_INDEX_URL);
+        }
+
+        raw = await res.text();
+      }
+
+      const shapeIndex = JSON.parse(raw);
+      const tagMap = mod.buildTagMap(shapeIndex);
+
+      return { searchShapes: mod.searchShapes, shapeIndex, tagMap };
+    })().catch(function(e)
+    {
+      shapeSearchPromise = null;
+      throw e;
+    });
+  }
+
+  return shapeSearchPromise;
+}
+
 /**
  * Opens a URL in the default browser (cross-platform)
  */
@@ -287,6 +352,41 @@ const tools =
   },
 ];
 
+// search_shapes is always advertised; the index is loaded lazily on first call
+// (local file in-repo, otherwise fetched from the CDN).
+tools.push({
+  name: "search_shapes",
+  description:
+    "Search the draw.io shape library by keywords. Returns matching shapes with " +
+    "their exact style strings, dimensions, and titles. Use ONLY for diagrams that " +
+    "need industry-specific or branded icons (cloud architecture, network topology, " +
+    "P&ID, electrical, Cisco, Kubernetes, BPMN). Do NOT use for standard diagram " +
+    "types like flowcharts, UML, ERD, org charts, or mind maps — these use basic " +
+    "geometric shapes (rectangles, diamonds, circles, cylinders) that are already " +
+    "covered in the XML reference. Also skip if the user asks to use basic/simple " +
+    "shapes or says not to search. The style string from the results can be " +
+    "used directly in mxCell style attributes.",
+  inputSchema:
+  {
+    type: "object",
+    properties:
+    {
+      query:
+      {
+        type: "string",
+        description:
+          "Space-separated search keywords (e.g. 'pid globe valve', 'aws lambda', 'cisco router', 'kubernetes pod')",
+      },
+      limit:
+      {
+        type: "number",
+        description: "Maximum number of results to return (default: 10, max: 50)",
+      },
+    },
+    required: ["query"],
+  },
+});
+
 // Create the MCP server
 const server = new Server(
   {
@@ -314,6 +414,47 @@ server.setRequestHandler(CallToolRequestSchema, async (request) =>
 
   try
   {
+    if (name === "search_shapes")
+    {
+      const query = args?.query;
+
+      if (!query)
+      {
+        return {
+          content: [{ type: "text", text: "Error: query parameter is required" }],
+          isError: true,
+        };
+      }
+
+      let shapeSearch;
+
+      try
+      {
+        shapeSearch = await loadShapeSearch();
+      }
+      catch (e)
+      {
+        return {
+          content: [{ type: "text", text: "Error: could not load the shape search index (" + e.message + "). Set DRAWIO_SHAPE_INDEX_URL to override the source." }],
+          isError: true,
+        };
+      }
+
+      const limit = Math.min(args?.limit || 10, 50);
+      const results = shapeSearch.searchShapes(shapeSearch.shapeIndex, shapeSearch.tagMap, query, limit);
+
+      if (results.length === 0)
+      {
+        return {
+          content: [{ type: "text", text: `No shapes found for query: ${query}` }],
+        };
+      }
+
+      return {
+        content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+      };
+    }
+
     let content;
     let type;
     const lightbox = args?.lightbox === true;
