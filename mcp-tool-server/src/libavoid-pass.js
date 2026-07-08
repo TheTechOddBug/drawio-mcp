@@ -3,8 +3,8 @@
 // The app server runs libavoid in the browser against the live mxGraph model.
 // The tool server has no renderer — it just compresses XML into a #create= URL
 // — so here we parse the mxGraphModel XML, run the SAME shared routing core
-// (computeLibavoidRoutes), and write the resulting waypoints back into the XML
-// before it is compressed.
+// (AvoidRouting.computeRoutes), and write the resulting waypoints back into
+// the XML before it is compressed.
 //
 // Parsing is a deliberately small, targeted pass over `<mxCell>` / `<mxGeometry>`
 // (draw.io XML is regular and the LLM is asked to emit well-formed XML with
@@ -19,23 +19,70 @@ import { fileURLToPath } from "url";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const WASM_PATH = join(__dirname, "..", "vendor", "libavoid", "libavoid.wasm");
 
-// computeLibavoidRoutes is the single source shared with the app server. The
-// canonical file is shared/libavoid-routing.js; the copy-shared npm script
-// copies it into src/ for the published package (like the *.md references).
-// Resolve the local copy first, fall back to the repo's shared/ for in-repo
-// runs that skipped copy-shared — mirroring how index.js reads the references.
-let routesFnPromise = null;
+// The routing core is libavoid-routing.js (canonical source: drawio-dev
+// js/libavoid-js/ — the same artifact the draw.io editor bundles and the app
+// server loads from the CDN). It is a plain browser script that assigns
+// globalThis.AvoidRouting. Loaded through the ETag-revalidated per-user disk
+// cache (routing-core-cache.js: primed by npm postinstall, refreshed from the
+// viewer.diagrams.net CDN only when the file actually changed — a 304
+// otherwise), so routing fixes ship with draw.io releases without
+// re-vendoring here; the vendored copy is the last fallback (CDN unreachable
+// with a cold cache, path not yet in a release, or the source failing the
+// sanity check below). The WASM glue + binary stay vendored either way: the
+// CDN only serves the browser build of the glue, and the core is
+// deliberately compatible with the bindings both builds expose. One
+// revalidation per process (memoized like the wasm load).
+import { loadCoreSource } from "./routing-core-cache.js";
 
-function getComputeRoutes()
+let routingPromise = null;
+
+// Indirect eval runs in global scope, where the script's IIFE assigns
+// globalThis.AvoidRouting — the same effect as a side-effect import. Throws
+// on unusable source, so loadCoreSource never caches or returns one. The
+// global is cleared first: loadCoreSource validates the cached copy before
+// a download, and its leftover global must not vouch for a fresh body that
+// fails to define AvoidRouting itself.
+function evalRoutingCore(src)
 {
-  if (routesFnPromise == null)
+  delete globalThis.AvoidRouting;
+
+  (0, eval)(src);
+
+  if (globalThis.AvoidRouting == null ||
+    typeof globalThis.AvoidRouting.computeRoutes !== "function")
   {
-    routesFnPromise = import("./libavoid-routing.js")
-      .catch(function() { return import("../../shared/libavoid-routing.js"); })
-      .then(function(mod) { return mod.computeLibavoidRoutes; });
+    throw new Error("AvoidRouting missing after eval");
+  }
+}
+
+function getRouting()
+{
+  if (routingPromise == null)
+  {
+    routingPromise = loadCoreSource(evalRoutingCore).then(function(src)
+    {
+      // Evaluate the returned choice: a NEWER download that failed
+      // validation is evaluated (clearing the global) AFTER the cached
+      // copy loadCoreSource falls back to, so the last eval doesn't
+      // necessarily match the returned source. Eval is idempotent and the
+      // file is tiny.
+      evalRoutingCore(src);
+
+      return globalThis.AvoidRouting;
+    }).catch(function(e)
+    {
+      // stderr — stdout carries the MCP protocol
+      console.error("[libavoid] routing core CDN/cache unavailable (" +
+        (e && e.message) + "); using the vendored copy");
+
+      // A script without import/export is valid ESM; import it for its
+      // side effect and read the global.
+      return import("../vendor/libavoid/libavoid-routing.js")
+        .then(function() { return globalThis.AvoidRouting; });
+    });
   }
 
-  return routesFnPromise;
+  return routingPromise;
 }
 
 // Lazy, memoized — the wasm only loads when routing is actually requested.
@@ -104,19 +151,88 @@ function num(v)
   return isNaN(n) ? 0 : n;
 }
 
+// Parse an mxGraph style string ("key=value;key2=value2;…") into a map.
+// Valueless tokens (shape names) are skipped — every key read here is k=v.
+function parseStyleMap(style)
+{
+  var map = {};
+  var parts = (style || "").split(";");
+
+  for (var i = 0; i < parts.length; i++)
+  {
+    var eq = parts[i].indexOf("=");
+    if (eq > 0) map[parts[i].substring(0, eq).trim()] = parts[i].substring(eq + 1);
+  }
+
+  return map;
+}
+
+// A fixed connection point on one end of an edge (exitX/exitY for the source,
+// entryX/entryY for the target) as {x, y, dir} via
+// AvoidRouting.constraintForPoint (clamps to the pin's [0,1] domain, derives
+// the ConnDirFlags from the original values). null for a floating endpoint.
+// Mirrors LibavoidRouting.fixedConstraint in the draw.io editor. The Routing
+// param is the loaded AvoidRouting namespace (getRouting()).
+function fixedConstraint(Routing, styleMap, source)
+{
+  return Routing.constraintForPoint(
+    parseFloat(styleMap[source ? "exitX" : "entryX"]),
+    parseFloat(styleMap[source ? "exitY" : "entryY"]));
+}
+
+// Resolved jetty size (minimum first/last segment length, px) for one end,
+// mirroring mxEdgeStyle.getJettySize: sourceJettySize/targetJettySize over
+// jettySize, with 'auto' derived from the end's arrow size. Two server-side
+// adaptations: a missing jettySize resolves as 'auto' (what setEdgeStyle
+// writes back, so the route matches a later in-editor re-route) and missing
+// arrows mean the editor's stylesheet defaults (endArrow=classic, no
+// startArrow) — the tool server has no stylesheet to merge.
+function jettyFor(styleMap, source)
+{
+  var value = styleMap[source ? "sourceJettySize" : "targetJettySize"];
+  if (value == null) value = styleMap.jettySize;
+  if (value == null) value = "auto";
+
+  if (value === "auto")
+  {
+    var type = styleMap[source ? "startArrow" : "endArrow"];
+    if (type == null) type = source ? "none" : "classic";
+
+    if (type !== "none")
+    {
+      var size = parseFloat(styleMap[source ? "startSize" : "endSize"]);
+      if (isNaN(size)) size = 6; // mxConstants.DEFAULT_MARKERSIZE
+      value = Math.max(2, Math.ceil((size + 10) / 10)) * 10; // orthBuffer 10
+    }
+    else
+    {
+      value = 20; // 2 * orthBuffer
+    }
+  }
+
+  value = parseFloat(value);
+  return isNaN(value) ? 0 : value;
+}
+
 // Apply the canonical libavoid edge style on an mxGraph style string, preserving
 // every other key (stroke, arrows, colors, …). libavoidRouting=1 keeps the edge
 // auto-routing via libavoid if the diagram is later opened and edited in the
 // draw.io editor; rounded/orthogonalLoop/jettySize match what the editor's
-// libavoid checkbox pairs with the flag.
+// libavoid checkbox pairs with the flag. An explicit jettySize is preserved
+// (the route was computed with it — see jettyFor); only a missing one gets the
+// editor default 'auto'.
 function setEdgeStyle(style)
 {
   var kept = [];
   var parts = (style || "").split(";");
   var managed = {
     edgeStyle: 1, rounded: 1, curved: 1,
-    libavoidRouting: 1, orthogonalLoop: 1, jettySize: 1, html: 1
+    libavoidRouting: 1, orthogonalLoop: 1, html: 1
   };
+  // Same tokenization as jettyFor (parseStyleMap), so the written-back style
+  // always matches the route just computed — a malformed token (bare
+  // 'jettySize' with no value) must not suppress the default.
+  var hasJetty = parseStyleMap(style).jettySize != null;
 
   for (var i = 0; i < parts.length; i++)
   {
@@ -131,7 +247,7 @@ function setEdgeStyle(style)
   kept.push("rounded=0");
   kept.push("libavoidRouting=1");
   kept.push("orthogonalLoop=1");
-  kept.push("jettySize=auto");
+  if (!hasJetty) kept.push("jettySize=auto");
   kept.push("html=1");
   return kept.join(";") + ";";
 }
@@ -196,6 +312,10 @@ export async function routeXml(xml)
   {
     if (typeof xml !== "string" || xml.indexOf("<mxCell") === -1) return xml;
 
+    // The routing core module is tiny — load it up front (the expensive wasm
+    // load stays deferred until edges are actually found below).
+    var Routing = await getRouting();
+
     var cells = parseCells(xml);
     var byId = {};
     var i;
@@ -248,15 +368,21 @@ export async function routeXml(xml)
       }
       else if (cell.attrs.edge === "1" && cell.attrs.source != null && cell.attrs.target != null)
       {
-        edges.push({ id: id, source: cell.attrs.source, target: cell.attrs.target });
+        // Fixed connection points (exitX/entryX…) route via directed pins and
+        // the per-end jettySize gives their minimum stub — like the editor.
+        var sm = parseStyleMap(cell.attrs.style);
+        edges.push({ id: id, source: cell.attrs.source, target: cell.attrs.target,
+          sourceConstraint: fixedConstraint(Routing, sm, true),
+          targetConstraint: fixedConstraint(Routing, sm, false),
+          sourceJetty: jettyFor(sm, true),
+          targetJetty: jettyFor(sm, false) });
       }
     }
 
     if (edges.length === 0) return xml;
 
-    var computeLibavoidRoutes = await getComputeRoutes();
     var Avoid = await getAvoid();
-    var routes = computeLibavoidRoutes(Avoid, vertices, edges);
+    var routes = Routing.computeRoutes(Avoid, vertices, edges);
     var routedIds = Object.keys(routes);
     if (routedIds.length === 0) return xml;
 
