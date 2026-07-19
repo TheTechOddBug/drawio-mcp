@@ -118,6 +118,28 @@ export function buildTagMap(shapeIndex)
   return tagMap;
 }
 
+// Base URL for resolving relative image paths in built-in shape styles
+// (e.g. image=img/lib/... or image=/img/clipart/... in the clip art and
+// Active Directory libraries). Those paths only resolve inside the draw.io
+// editor's own origin — MCP consumers render elsewhere (inline viewer
+// iframe, exported files), so they are rewritten to absolute URLs at
+// search time.
+var IMAGE_BASE_URL = "https://app.diagrams.net/";
+
+/**
+ * Rewrite a relative image= style value to an absolute app.diagrams.net
+ * URL. Absolute (http/https) and data: URI values are left untouched.
+ */
+function toAbsoluteImageUrl(style)
+{
+  if (typeof style !== "string")
+  {
+    return style;
+  }
+
+  return style.replace(/(^|;)image=(?!https?:|data:)\/?/g, "$1image=" + IMAGE_BASE_URL);
+}
+
 /**
  * Split a token on camelCase and letter-digit boundaries.
  * e.g. "pid2misc" → ["pid", "misc"], "pid2inst" → ["pid", "inst"],
@@ -380,7 +402,7 @@ export function searchShapesWithMeta(shapeIndex, tagMap, query, limit)
     var shape = shapeIndex[candidates[i].idx];
 
     results.push({
-      style: shape.style,
+      style: toAbsoluteImageUrl(shape.style),
       w: shape.w,
       h: shape.h,
       title: shape.title
