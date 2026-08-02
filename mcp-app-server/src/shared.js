@@ -365,22 +365,12 @@ export function buildHtml(appWithDepsJs, pakoDeflateJs, mermaidJs, options)
         <span id="copy-xml-label">Copy</span>
       </button>
       <button id="fullscreen-btn" class="icon-only" title="Toggle fullscreen" aria-label="Toggle fullscreen">
-        <svg id="fs-icon-enter" viewBox="0 0 24 24" aria-hidden="true"><polyline points="4 8 4 4 8 4"/><polyline points="16 4 20 4 20 8"/><polyline points="20 16 20 20 16 20"/><polyline points="8 20 4 20 4 16"/></svg>
-        <svg id="fs-icon-exit" viewBox="0 0 24 24" aria-hidden="true" style="display:none"><polyline points="8 4 8 8 4 8"/><polyline points="16 4 16 8 20 8"/><polyline points="20 16 16 16 16 20"/><polyline points="4 16 8 16 8 20"/></svg>
+        <svg id="fs-icon-enter" viewBox="0 -960 960 960" aria-hidden="true"><path fill="currentColor" stroke="none" d="M120-120v-320h80v184l504-504H520v-80h320v320h-80v-184L256-200h184v80H120Z"/></svg>
+        <svg id="fs-icon-exit" viewBox="0 -960 960 960" aria-hidden="true" style="display:none"><path fill="currentColor" stroke="none" d="m136-80-56-56 264-264H160v-80h320v320h-80v-184L136-80Zm344-400v-320h80v184l264-264 56 56-264 264h184v80H480Z"/></svg>
       </button>
       <button id="expand-btn" class="icon-only" style="display:none" title="Expand vertically" aria-label="Expand vertically">
-        <svg id="expand-icon-expand" viewBox="0 0 24 24" aria-hidden="true">
-          <polyline points="8 7 12 3 16 7"/>
-          <line x1="12" y1="3" x2="12" y2="11"/>
-          <polyline points="8 17 12 21 16 17"/>
-          <line x1="12" y1="13" x2="12" y2="21"/>
-        </svg>
-        <svg id="expand-icon-collapse" viewBox="0 0 24 24" aria-hidden="true" style="display:none">
-          <polyline points="8 3 12 7 16 3"/>
-          <line x1="12" y1="7" x2="12" y2="11"/>
-          <polyline points="8 21 12 17 16 21"/>
-          <line x1="12" y1="13" x2="12" y2="17"/>
-        </svg>
+        <svg id="expand-icon-expand" viewBox="0 -960 960 960" aria-hidden="true"><path fill="currentColor" stroke="none" d="M440-520v-208l-64 64-56-56 160-160 160 160-56 56-64-62v206h-80ZM440-440v208l-64-64-56 56 160 160 160-160-56-56-64 62v-206h-80Z"/></svg>
+        <svg id="expand-icon-collapse" viewBox="0 -960 960 960" aria-hidden="true" style="display:none"><path fill="currentColor" stroke="none" d="M440-880v208l-64-64-56 56 160 160 160-160-56-56-64 62v-206h-80ZM440-80v-208l-64 64-56-56 160-160 160 160-56 56-64-62v206h-80Z"/></svg>
       </button>
       <button id="layout-btn" class="icon-only" style="display:none" title="Layout: as authored" aria-label="Cycle layout">
         <svg id="layout-icon-none" viewBox="0 0 24 24" aria-hidden="true">
