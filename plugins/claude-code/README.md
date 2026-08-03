@@ -103,6 +103,8 @@ Both routes end up as the same native `.drawio` format, immediately editable in 
 
 This repository offers multiple ways to integrate draw.io with AI assistants:
 
+- **[Codex Plugin](../codex/drawio/README.md)** — the same `drawio` skill for Codex CLI
+- **[GitHub Copilot Plugin](../copilot/README.md)** — the same `drawio` skill for GitHub Copilot
 - **[MCP App Server](../../mcp-app-server/README.md)** — Inline diagrams in chat (Claude.ai, VS Code)
 - **[MCP Tool Server](../../mcp-tool-server/README.md)** — Opens diagrams in browser via MCP (Claude Desktop)
 - **[Project Instructions](../../project-instructions/README.md)** — Claude.ai Projects, no install needed

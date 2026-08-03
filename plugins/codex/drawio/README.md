@@ -125,6 +125,7 @@ for the composer icon and the light/dark plugin logo, with `brandColor` `#F08705
 This repository offers multiple ways to integrate draw.io with AI assistants:
 
 - **[Claude Code Plugin](../../claude-code/README.md)** — the same `drawio` skill for Claude Code
+- **[GitHub Copilot Plugin](../../copilot/README.md)** — the same `drawio` skill for GitHub Copilot
 - **[MCP App Server](../../../mcp-app-server/README.md)** — Inline diagrams in chat (Claude.ai, VS Code)
 - **[MCP Tool Server](../../../mcp-tool-server/README.md)** — Opens diagrams in browser via MCP (Claude Desktop)
 - **[Project Instructions](../../../project-instructions/README.md)** — Claude.ai Projects, no install needed

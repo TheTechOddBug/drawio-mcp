@@ -6,6 +6,7 @@ This directory groups assistant-side integrations by **host** — one subdirecto
 |-----------|------|--------|
 | [`claude-code/`](claude-code/README.md) | [Claude Code](https://docs.anthropic.com/en/docs/claude-code) | ✅ Available |
 | [`codex/drawio/`](codex/drawio/README.md) | [Codex CLI](https://github.com/openai/codex) | ✅ Available |
+| [`copilot/`](copilot/README.md) | [GitHub Copilot CLI](https://docs.github.com/en/copilot/how-tos/copilot-cli) | ✅ Available |
 
 Each host has its own marketplace manifest at the repo root, so users install with that
 host's own commands.
@@ -24,6 +25,13 @@ codex plugin marketplace add jgraph/drawio-mcp
 codex plugin add drawio@drawio
 ```
 
+**GitHub Copilot CLI** — via [`.github/plugin/marketplace.json`](../.github/plugin/marketplace.json):
+
+```bash
+copilot plugin marketplace add jgraph/drawio-mcp
+copilot plugin install drawio@drawio
+```
+
 ## Adding a plugin for another host
 
 Support for a new assistant lands as a sibling directory at this level:
@@ -31,14 +39,16 @@ Support for a new assistant lands as a sibling directory at this level:
 ```
 plugins/
 ├── claude-code/             ← Claude Code plugin (plugin root)
-└── codex/                   ← Codex host group
-    └── drawio/              ← Codex plugin root (folder name == plugin.json "name")
+├── codex/                   ← Codex host group
+│   └── drawio/              ← Codex plugin root (folder name == plugin.json "name")
+└── copilot/                 ← GitHub Copilot CLI plugin (plugin root)
 ```
 
 Codex normalizes a plugin's root folder name to match its `plugin.json` `"name"`, so the
 Codex plugin root is nested one level (`codex/drawio/`) inside the host group directory;
-Claude Code has no such rule, so `claude-code/` is itself the plugin root. If another
-assistant (Cursor, etc.) is added later, it follows the same pattern in its own way.
+Claude Code and Copilot have no such rule, so `claude-code/` and `copilot/` are themselves
+the plugin roots. If another assistant (Cursor, etc.) is added later, it follows the same
+pattern in its own way.
 
 The draw.io guidance itself — *how* to generate `.drawio` files, embed XML in PNG/SVG/PDF, and produce `app.diagrams.net` URLs — is shared. Only the wrapping (manifest format, file layout, invocation prefix) differs per host, and each host has its own plugin/skill model, so the wrapping is not assumed to be uniform.
 
