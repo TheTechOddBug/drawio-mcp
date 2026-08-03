@@ -10,6 +10,7 @@ Renders draw.io diagrams inline in AI chat interfaces using the MCP Apps protoco
 | `src/index.js` | Node.js entry (Express + stdio transports) |
 | `src/worker.js` | Cloudflare Workers entry (Web Standard fetch handler) |
 | `src/build-html.js` | Build script: generates `generated-html.js` for the Worker |
+| `server.json` | MCP Community Registry manifest (`io.draw/mcp`, remote `https://mcp.draw.io/mcp`) — publish runbook in README "Publishing to the MCP Registry"; keep `version` in lockstep with `package.json` |
 
 ## Architecture
 

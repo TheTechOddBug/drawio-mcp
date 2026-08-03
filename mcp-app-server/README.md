@@ -141,6 +141,31 @@ This starts a local Workers dev server at `http://localhost:8787/mcp`.
 | **HTML build** | Reads bundles from `node_modules` at startup | Pre-built at deploy time via `src/build-html.js` → `src/generated-html.js` |
 | **Schema validation** | Default (Zod-based) | Default (Zod-based) |
 
+## Publishing to the MCP Registry
+
+The hosted server is listed in the [MCP Community Registry](https://github.com/modelcontextprotocol/registry) as **`io.draw/mcp`**, defined by [`server.json`](server.json) in this directory. The community registry feeds downstream surfaces such as [GitHub's MCP Registry](https://github.com/mcp) and VS Code's *MCP: Browse Servers* (GitHub additionally curates what it features on its own page).
+
+**One-time setup** — prove ownership of the `draw.io` domain. Generate a keypair (macOS's system LibreSSL lacks Ed25519 — use Homebrew OpenSSL 3) and publish the public key as a DNS TXT record:
+
+```bash
+brew install mcp-publisher openssl@3
+OPENSSL=/opt/homebrew/opt/openssl@3/bin/openssl
+$OPENSSL genpkey -algorithm Ed25519 -out ~/.drawio-mcp-registry-key.pem
+echo "draw.io. IN TXT \"v=MCPv1; k=ed25519; p=$($OPENSSL pkey -in ~/.drawio-mcp-registry-key.pem -pubout -outform DER | tail -c 32 | base64)\""
+```
+
+Add the printed TXT record on the **apex** of `draw.io` (record name `@` in Cloudflare DNS — not under a selector like `_mcp-auth`, which the registry will not see). Keep the key file for future publishes, and keep it outside the repository; losing it only means generating a new key and replacing the TXT record (remove the stale record — leftovers are tried first and break verification).
+
+**Publish / update** — bump `version` in `server.json` first (kept in lockstep with `package.json`), then from this directory:
+
+```bash
+OPENSSL=/opt/homebrew/opt/openssl@3/bin/openssl
+mcp-publisher login dns --domain draw.io --private-key "$($OPENSSL pkey -in ~/.drawio-mcp-registry-key.pem -noout -text | grep -A3 'priv:' | tail -n +2 | tr -d ' :\n')"
+mcp-publisher publish
+```
+
+The `io.draw` namespace is the reverse-DNS form of the verified `draw.io` domain (the same pattern as the registry's own `io.modelcontextprotocol/everything`). The alternative would be `io.github.jgraph/...` via `mcp-publisher login github`, but that requires jgraph org-owner rights and gives up the brand naming.
+
 ## Architecture
 
 ### File layout
